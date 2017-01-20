@@ -42,6 +42,8 @@ import java.util.TimeZone;
  * for the Calcite engine.
  */
 public class CalciteResultSet extends AvaticaResultSet {
+
+  /** Creates a CalciteResultSet. */
   CalciteResultSet(AvaticaStatement statement,
       CalcitePrepare.CalciteSignature calciteSignature,
       ResultSetMetaData resultSetMetaData, TimeZone timeZone,

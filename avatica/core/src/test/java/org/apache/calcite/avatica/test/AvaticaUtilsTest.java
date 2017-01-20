@@ -19,17 +19,20 @@ package org.apache.calcite.avatica.test;
 import org.apache.calcite.avatica.AvaticaUtils;
 import org.apache.calcite.avatica.ConnectionConfigImpl;
 import org.apache.calcite.avatica.ConnectionProperty;
+import org.apache.calcite.avatica.util.ByteString;
 
 import org.junit.Test;
 
 import java.math.BigDecimal;
 import java.math.BigInteger;
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.LinkedHashSet;
 import java.util.Properties;
 import java.util.Set;
 
 import static org.hamcrest.CoreMatchers.is;
+import static org.hamcrest.CoreMatchers.nullValue;
 import static org.junit.Assert.assertArrayEquals;
 import static org.junit.Assert.assertThat;
 import static org.junit.Assert.fail;
@@ -147,6 +150,62 @@ public class AvaticaUtilsTest {
     properties.setProperty(s.name, "  ");
     env = s.wrap(properties);
     assertThat(env.getString(), is("  "));
+
+    try {
+      final ConnectionPropertyImpl t =
+          new ConnectionPropertyImpl("T", null, ConnectionProperty.Type.ENUM);
+      fail("should throw if you specify an enum property without a class, got "
+          + t);
+    } catch (AssertionError e) {
+      assertThat(e.getMessage(), is("must specify value class for an ENUM"));
+      // ok
+    }
+
+    // An enum with a default value
+    final ConnectionPropertyImpl t = new ConnectionPropertyImpl("T", Size.BIG,
+        ConnectionProperty.Type.ENUM, Size.class);
+    env = t.wrap(properties);
+    assertThat(env.getEnum(Size.class), is(Size.BIG));
+    assertThat(env.getEnum(Size.class, Size.SMALL), is(Size.SMALL));
+    assertThat(env.getEnum(Size.class, null), nullValue());
+    try {
+      final Weight envEnum = env.getEnum(Weight.class, null);
+      fail("expected error, got " + envEnum);
+    } catch (AssertionError e) {
+      assertThat(e.getMessage(),
+          is("wrong value class; expected " + Size.class));
+    }
+
+    // An enum with a default value that is an anonymous enum,
+    // not specifying value type.
+    final ConnectionPropertyImpl v = new ConnectionPropertyImpl("V",
+        Size.SMALL, ConnectionProperty.Type.ENUM);
+    env = v.wrap(properties);
+    assertThat(env.getEnum(Size.class), is(Size.SMALL));
+    assertThat(env.getEnum(Size.class, Size.BIG), is(Size.BIG));
+    assertThat(env.getEnum(Size.class, null), nullValue());
+    try {
+      final Weight envEnum = env.getEnum(Weight.class, null);
+      fail("expected error, got " + envEnum);
+    } catch (AssertionError e) {
+      assertThat(e.getMessage(),
+          is("wrong value class; expected " + Size.class));
+    }
+
+    // An enum with no default value
+    final ConnectionPropertyImpl u = new ConnectionPropertyImpl("U", null,
+        ConnectionProperty.Type.ENUM, Size.class);
+    env = u.wrap(properties);
+    assertThat(env.getEnum(Size.class), nullValue());
+    assertThat(env.getEnum(Size.class, Size.SMALL), is(Size.SMALL));
+    assertThat(env.getEnum(Size.class, null), nullValue());
+    try {
+      final Weight envEnum = env.getEnum(Weight.class, null);
+      fail("expected error, got " + envEnum);
+    } catch (AssertionError e) {
+      assertThat(e.getMessage(),
+          is("wrong value class; expected " + Size.class));
+    }
   }
 
   @Test public void testLongToIntegerTranslation() {
@@ -158,16 +217,78 @@ public class AvaticaUtilsTest {
     assertArrayEquals(convertedValues, intValues);
   }
 
+  @Test public void testByteString() {
+    final byte[] bytes = {3, 14, 15, 92, 0, 65, 35, 0};
+    final ByteString s = new ByteString(bytes);
+    final ByteString s2 = new ByteString(bytes.clone());
+    final ByteString s3 = new ByteString(new byte[0]);
+    final ByteString s4 = new ByteString(new byte[] {0});
+    final ByteString s5 = new ByteString(new byte[]{15, 92});
+
+    // length
+    assertThat(s.length(), is(8));
+    assertThat(s3.length(), is(0));
+    assertThat(s4.length(), is(1));
+
+    // equals and hashCode
+    assertThat(s.hashCode(), is(s2.hashCode()));
+    assertThat(s.equals(s2), is(true));
+    assertThat(s2.equals(s), is(true));
+    assertThat(s.equals(s3), is(false));
+    assertThat(s3.equals(s), is(false));
+
+    // toString
+    assertThat(s.toString(), is("030e0f5c00412300"));
+    assertThat(s3.toString(), is(""));
+    assertThat(s4.toString(), is("00"));
+
+    // indexOf
+    assertThat(s.indexOf(s3), is(0));
+    assertThat(s.indexOf(s3, 5), is(5));
+    assertThat(s.indexOf(s3, 15), is(-1));
+    assertThat(s.indexOf(s4), is(4));
+    assertThat(s.indexOf(s4, 4), is(4));
+    assertThat(s.indexOf(s4, 5), is(7));
+    assertThat(s.indexOf(s5), is(2));
+    assertThat(s.indexOf(s5, 2), is(2));
+    assertThat(s.indexOf(s5, 3), is(-1));
+    assertThat(s.indexOf(s5, 7), is(-1));
+
+    // substring
+    assertThat(s.substring(8), is(s3));
+    assertThat(s.substring(7), is(s4));
+    assertThat(s.substring(0), is(s));
+
+    // getBytes
+    assertThat(s.getBytes().length, is(8));
+    assertThat(Arrays.equals(s.getBytes(), bytes), is(true));
+    assertThat(s.getBytes()[3], is((byte) 92));
+    final byte[] copyBytes = s.getBytes();
+    copyBytes[3] = 11;
+    assertThat(s.getBytes()[3], is((byte) 92));
+    assertThat(s, is(s2));
+  }
+
   /** Dummy implementation of {@link ConnectionProperty}. */
   private static class ConnectionPropertyImpl implements ConnectionProperty {
     private final String name;
     private final Object defaultValue;
+    private final Class<?> valueClass;
     private Type type;
 
     ConnectionPropertyImpl(String name, Object defaultValue, Type type) {
+      this(name, defaultValue, type, null);
+    }
+
+    ConnectionPropertyImpl(String name, Object defaultValue, Type type,
+        Class valueClass) {
       this.name = name;
       this.defaultValue = defaultValue;
       this.type = type;
+      this.valueClass = type.deduceValueClass(defaultValue, valueClass);
+      if (!type.valid(defaultValue, this.valueClass)) {
+        throw new AssertionError(name);
+      }
     }
 
     public String name() {
@@ -186,6 +307,10 @@ public class AvaticaUtilsTest {
       return type;
     }
 
+    public Class valueClass() {
+      return valueClass;
+    }
+
     public ConnectionConfigImpl.PropEnv wrap(Properties properties) {
       final HashMap<String, ConnectionProperty> map = new HashMap<>();
       map.put(name, this);
@@ -198,6 +323,17 @@ public class AvaticaUtilsTest {
     }
   }
 
+  /** How large? */
+  private enum Size {
+    BIG,
+    SMALL {
+    }
+  }
+
+  /** How heavy? */
+  private enum Weight {
+    HEAVY, LIGHT
+  }
 }
 
 // End AvaticaUtilsTest.java

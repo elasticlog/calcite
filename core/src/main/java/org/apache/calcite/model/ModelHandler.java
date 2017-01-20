@@ -42,6 +42,7 @@ import org.apache.calcite.util.Util;
 
 import com.fasterxml.jackson.core.JsonParser;
 import com.fasterxml.jackson.databind.ObjectMapper;
+
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 
@@ -237,7 +238,10 @@ public class ModelHandler {
         case BASE_DIRECTORY:
           if (!modelUri.startsWith("inline:")) {
             final File file = new File(modelUri);
-            builder.put(extraOperand.camelName, file.getParentFile());
+            final File parentFile = file.getParentFile();
+            if (parentFile != null) {
+              builder.put(extraOperand.camelName, parentFile);
+            }
           }
           break;
         case TABLES:
@@ -288,9 +292,10 @@ public class ModelHandler {
         viewName = jsonMaterialization.view;
         existing = false;
       }
+      List<String> viewPath = calciteSchema.path(viewName);
       schema.add(viewName,
           MaterializedViewTable.create(calciteSchema,
-              jsonMaterialization.getSql(), jsonMaterialization.viewSchemaPath,
+              jsonMaterialization.getSql(), jsonMaterialization.viewSchemaPath, viewPath,
               jsonMaterialization.table, existing));
     } catch (Exception e) {
       throw new RuntimeException("Error instantiating " + jsonMaterialization,
@@ -357,8 +362,10 @@ public class ModelHandler {
     try {
       final SchemaPlus schema = currentMutableSchema("view");
       final List<String> path = Util.first(jsonView.path, currentSchemaPath());
+      final List<String> viewPath = ImmutableList.<String>builder().addAll(path)
+          .add(jsonView.name).build();
       schema.add(jsonView.name,
-          ViewTable.viewMacro(schema, jsonView.getSql(), path,
+          ViewTable.viewMacro(schema, jsonView.getSql(), path, viewPath,
               jsonView.modifiable));
     } catch (Exception e) {
       throw new RuntimeException("Error instantiating " + jsonView, e);

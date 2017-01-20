@@ -28,6 +28,7 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.Objects;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * Implementation of {@link java.sql.Statement}
@@ -42,6 +43,9 @@ public abstract class AvaticaStatement
   /** Statement id; unique within connection. */
   public Meta.StatementHandle handle;
   protected boolean closed;
+
+  /** Support for {@link #cancel()} method. */
+  protected final AtomicBoolean cancelFlag;
 
   /**
    * Support for {@link #closeOnCompletion()} method.
@@ -113,6 +117,11 @@ public abstract class AvaticaStatement
     connection.statementMap.put(h.id, this);
     this.handle = h;
     this.batchedSql = new ArrayList<>();
+    try {
+      this.cancelFlag = connection.getCancelFlag(h);
+    } catch (NoSuchStatementException e) {
+      throw new AssertionError("no statement", e);
+    }
   }
 
   /** Returns the identifier of the statement, unique within its connection. */
@@ -173,6 +182,7 @@ public abstract class AvaticaStatement
   protected void resetStatement() {
     // Invalidate the old statement
     connection.statementMap.remove(handle.id);
+    connection.flagMap.remove(handle.id);
     // Get a new one
     final Meta.ConnectionHandle ch = new Meta.ConnectionHandle(connection.id);
     Meta.StatementHandle h = connection.meta.createStatement(ch);
@@ -249,6 +259,7 @@ public abstract class AvaticaStatement
       } finally {
         // make sure we don't leak on our side
         connection.statementMap.remove(handle.id);
+        connection.flagMap.remove(handle.id);
       }
       // If onStatementClose throws, this method will throw an exception (later
       // converted to SQLException), but this statement still gets closed.
@@ -320,6 +331,8 @@ public abstract class AvaticaStatement
     if (openResultSet != null) {
       openResultSet.cancel();
     }
+    // If there is an open result set, it probably just set the same flag.
+    cancelFlag.compareAndSet(false, true);
   }
 
   public SQLWarning getWarnings() throws SQLException {

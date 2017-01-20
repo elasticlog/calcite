@@ -18,12 +18,15 @@ package org.apache.calcite.test;
 
 import org.apache.calcite.jdbc.JavaTypeFactoryImpl;
 import org.apache.calcite.materialize.MaterializationService;
+import org.apache.calcite.plan.RelOptPlanner;
+import org.apache.calcite.plan.RelOptRule;
 import org.apache.calcite.plan.RelOptTable;
 import org.apache.calcite.plan.SubstitutionVisitor;
 import org.apache.calcite.prepare.Prepare;
 import org.apache.calcite.rel.RelNode;
 import org.apache.calcite.rel.RelVisitor;
 import org.apache.calcite.rel.core.TableScan;
+import org.apache.calcite.rel.rules.MaterializedViewJoinRule;
 import org.apache.calcite.rel.type.RelDataType;
 import org.apache.calcite.rel.type.RelDataTypeSystem;
 import org.apache.calcite.rex.RexBuilder;
@@ -33,6 +36,8 @@ import org.apache.calcite.rex.RexNode;
 import org.apache.calcite.rex.RexUtil;
 import org.apache.calcite.runtime.Hook;
 import org.apache.calcite.sql.fun.SqlStdOperatorTable;
+import org.apache.calcite.tools.RuleSet;
+import org.apache.calcite.tools.RuleSets;
 import org.apache.calcite.util.JsonBuilder;
 import org.apache.calcite.util.TryThreadLocal;
 import org.apache.calcite.util.Util;
@@ -146,20 +151,48 @@ public class MaterializationTest {
   /** Checks that a given query can use a materialized view with a given
    * definition. */
   private void checkMaterialize(String materialize, String query) {
-    checkMaterialize(materialize, query, JdbcTest.HR_MODEL, CONTAINS_M0);
+    checkMaterialize(materialize, query, JdbcTest.HR_MODEL, CONTAINS_M0,
+        RuleSets.ofList(ImmutableList.<RelOptRule>of()));
+  }
+
+  /** Checks that a given query can use a materialized view with a given
+   * definition. */
+  private void checkMaterializeWithRules(String materialize, String query, RuleSet rules) {
+    checkMaterialize(materialize, query, JdbcTest.HR_MODEL, CONTAINS_M0, rules);
   }
 
   /** Checks that a given query can use a materialized view with a given
    * definition. */
   private void checkMaterialize(String materialize, String query, String model,
       Function<ResultSet, Void> explainChecker) {
+    checkMaterialize(materialize, query, model, explainChecker,
+        RuleSets.ofList(ImmutableList.<RelOptRule>of()));
+  }
+
+  /** Checks that a given query can use a materialized view with a given
+   * definition. */
+  private void checkMaterialize(String materialize, String query, String model,
+      Function<ResultSet, Void> explainChecker, final RuleSet rules) {
     try (final TryThreadLocal.Memo ignored = Prepare.THREAD_TRIM.push(true)) {
       MaterializationService.setThreadLocal();
-      CalciteAssert.that()
+      CalciteAssert.AssertQuery that = CalciteAssert.that()
           .withMaterializations(model, "m0", materialize)
           .query(query)
-          .enableMaterializations(true)
-          .explainMatches("", explainChecker)
+          .enableMaterializations(true);
+
+      // Add any additional rules required for the test
+      if (rules.iterator().hasNext()) {
+        that.withHook(Hook.PLANNER, new Function<RelOptPlanner, Void>() {
+          public Void apply(RelOptPlanner planner) {
+            for (RelOptRule rule : rules) {
+              planner.addRule(rule);
+            }
+            return null;
+          }
+        });
+      }
+
+      that.explainMatches("", explainChecker)
           .sameResultWithMaterializationsDisabled();
     }
   }
@@ -338,7 +371,7 @@ public class MaterializationTest {
   }
 
   /** As {@link #testFilterQueryOnFilterView()} but condition is stronger in
-   * query and columns selected are subset of columns in materialized view */
+   * query and columns selected are subset of columns in materialized view. */
   @Test public void testFilterQueryOnFilterView5() {
     checkMaterialize(
             "select \"name\", \"deptno\" from \"emps\" where \"deptno\" > 10",
@@ -346,7 +379,7 @@ public class MaterializationTest {
   }
 
   /** As {@link #testFilterQueryOnFilterView()} but condition is stronger in
-   * query and columns selected are subset of columns in materialized view */
+   * query and columns selected are subset of columns in materialized view. */
   @Test public void testFilterQueryOnFilterView6() {
     checkMaterialize(
             "select \"name\", \"deptno\", \"salary\" from \"emps\" "
@@ -355,8 +388,8 @@ public class MaterializationTest {
   }
 
   /** As {@link #testFilterQueryOnFilterView()} but condition is stronger in
-   * query and columns selected are subset of columns in materialized view
-   * Condition here is complex*/
+   * query and columns selected are subset of columns in materialized view.
+   * Condition here is complex. */
   @Test public void testFilterQueryOnFilterView7() {
     checkMaterialize(
             "select * from \"emps\" where "
@@ -368,8 +401,8 @@ public class MaterializationTest {
   }
 
   /** As {@link #testFilterQueryOnFilterView()} but condition is stronger in
-   * query. However, columns selected are not present in columns of materialized view,
-   * hence should not use materialized view*/
+   * query. However, columns selected are not present in columns of materialized
+   * view, Hence should not use materialized view. */
   @Test public void testFilterQueryOnFilterView8() {
     checkNoMaterialize(
             "select \"name\", \"deptno\" from \"emps\" where \"deptno\" > 10",
@@ -378,7 +411,7 @@ public class MaterializationTest {
   }
 
   /** As {@link #testFilterQueryOnFilterView()} but condition is weaker in
-   * query.*/
+   * query. */
   @Test public void testFilterQueryOnFilterView9() {
     checkNoMaterialize(
             "select \"name\", \"deptno\" from \"emps\" where \"deptno\" > 10",
@@ -386,9 +419,9 @@ public class MaterializationTest {
                 + "where \"deptno\" > 30 or \"empid\" > 10",
             JdbcTest.HR_MODEL);
   }
+
   /** As {@link #testFilterQueryOnFilterView()} but condition currently
-   * has unsupported type being checked on query.
-   */
+   * has unsupported type being checked on query. */
   @Test public void testFilterQueryOnFilterView10() {
     checkNoMaterialize(
             "select \"name\", \"deptno\" from \"emps\" where \"deptno\" > 10 "
@@ -399,8 +432,8 @@ public class MaterializationTest {
   }
 
   /** As {@link #testFilterQueryOnFilterView()} but condition is weaker in
-   * query and columns selected are subset of columns in materialized view
-   * Condition here is complex*/
+   * query and columns selected are subset of columns in materialized view.
+   * Condition here is complex. */
   @Test public void testFilterQueryOnFilterView11() {
     checkNoMaterialize(
             "select \"name\", \"deptno\" from \"emps\" where "
@@ -421,8 +454,8 @@ public class MaterializationTest {
   }
 
   /** As {@link #testFilterQueryOnFilterView()} but condition is weaker in
-   * query and columns selected are subset of columns in materialized view
-   * Condition here is complex*/
+   * query and columns selected are subset of columns in materialized view.
+   * Condition here is complex. */
   @Test public void testFilterQueryOnFilterView13() {
     checkNoMaterialize(
             "select * from \"emps\" where "
@@ -434,7 +467,7 @@ public class MaterializationTest {
   }
 
   /** As {@link #testFilterQueryOnFilterView7()} but columns in materialized
-   * view are a permutation of columns in the query*/
+   * view are a permutation of columns in the query. */
   @Test public void testFilterQueryOnFilterView14() {
     String q = "select * from \"emps\" where (\"salary\" > 1000 "
         + "or (\"deptno\" >= 30 and \"salary\" <= 500))";
@@ -447,7 +480,7 @@ public class MaterializationTest {
   }
 
   /** As {@link #testFilterQueryOnFilterView13()} but using alias
-   * and condition of query is stronger*/
+   * and condition of query is stronger. */
   @Test public void testAlias() {
     checkMaterialize(
             "select * from \"emps\" as em where "
@@ -586,7 +619,7 @@ public class MaterializationTest {
             rexBuilder.makeCall(
                 SqlStdOperatorTable.NOT,
                 i0_eq_0));
-    checkSatisfiable(e3, "NOT(=($0, 0))");
+    checkSatisfiable(e3, "<>($0, 0)");
 
     // The expression "$1 = 1".
     final RexNode i1_eq_1 =
@@ -616,7 +649,7 @@ public class MaterializationTest {
             rexBuilder.makeCall(
                 SqlStdOperatorTable.NOT,
                 i1_eq_1));
-    checkSatisfiable(e5, "AND(=($0, 0), NOT(=($1, 1)))");
+    checkSatisfiable(e5, "AND(=($0, 0), <>($1, 1))");
 
     // "$0 = 0 AND NOT ($0 = 0 AND $1 = 1)" may be satisfiable. Can simplify.
     final RexNode e6 =
@@ -629,7 +662,7 @@ public class MaterializationTest {
                     SqlStdOperatorTable.AND,
                     i0_eq_0,
                     i1_eq_1)));
-    checkSatisfiable(e6, "AND(=($0, 0), NOT(AND(=($0, 0), =($1, 1))))");
+    checkSatisfiable(e6, "AND(=($0, 0), OR(<>($0, 0), <>($1, 1)))");
 
     // "$0 = 0 AND ($1 = 1 AND NOT ($0 = 0))" is not satisfiable.
     final RexNode e7 =
@@ -682,7 +715,7 @@ public class MaterializationTest {
                         SqlStdOperatorTable.NOT,
                         i4))));
     checkSatisfiable(e8,
-        "AND(=($0, 0), $2, $3, NOT(AND($2, $3, $4)), NOT($4))");
+        "AND(=($0, 0), $2, $3, OR(NOT($2), NOT($3), NOT($4)), NOT($4))");
   }
 
   private void checkNotSatisfiable(RexNode e) {
@@ -871,6 +904,16 @@ public class MaterializationTest {
     final String m = "select \"deptno\", \"empid\", \"name\",\n"
         + "\"salary\", \"commission\" from \"emps\"";
     checkMaterialize(m, q);
+  }
+
+  @Test public void testJoinMaterialization3() {
+    String q = "select \"empid\" \"deptno\" from \"emps\"\n"
+            + "join \"depts\" using (\"deptno\") where \"empid\" = 1";
+    final String m = "select \"empid\" \"deptno\" from \"emps\"\n"
+            + "join \"depts\" using (\"deptno\")";
+    RuleSet rules = RuleSets.ofList(MaterializedViewJoinRule.INSTANCE_PROJECT,
+                                    MaterializedViewJoinRule.INSTANCE_TABLE_SCAN);
+    checkMaterializeWithRules(m, q, rules);
   }
 
   /** Test case for

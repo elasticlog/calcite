@@ -24,6 +24,7 @@ import java.util.concurrent.ConcurrentMap;
 
 import org.apache.calcite.DataContext;
 import org.apache.calcite.adapter.java.JavaTypeFactory;
+import org.apache.calcite.avatica.Meta;
 import org.apache.calcite.jdbc.CalcitePrepare;
 import org.apache.calcite.jdbc.CalciteSchema;
 import org.apache.calcite.jdbc.CalciteSchema.LatticeEntry;
@@ -46,6 +47,7 @@ import org.apache.calcite.runtime.Hook;
 import org.apache.calcite.runtime.Typed;
 import org.apache.calcite.schema.impl.StarTable;
 import org.apache.calcite.sql.SqlExplain;
+import org.apache.calcite.sql.SqlExplainFormat;
 import org.apache.calcite.sql.SqlExplainLevel;
 import org.apache.calcite.sql.SqlKind;
 import org.apache.calcite.sql.SqlNode;
@@ -121,7 +123,7 @@ public abstract class Prepare {
       RelDataType resultType,
       RelDataType parameterRowType,
       RelRoot root,
-      boolean explainAsXml,
+      SqlExplainFormat format,
       SqlExplainLevel detailLevel);
 
   /**
@@ -132,12 +134,15 @@ public abstract class Prepare {
    * @param lattices Lattices
    * @return an equivalent optimized relational expression
    */
-  protected RelRoot optimize(final RelRoot root,
+  protected RelRoot optimize(RelRoot root,
       final List<Materialization> materializations,
       final List<CalciteSchema.LatticeEntry> lattices) {
     final RelOptPlanner planner = root.rel.getCluster().getPlanner();
 
-    planner.setRoot(root.rel);
+    // Add a project to the root. Even if the project is trivial, it informs
+    // rules firing on the relational expression below it which of the fields
+    // are used. SemiJoinRule, for instance.
+    planner.setRoot(root.project(true));
 
     final RelTraitSet desiredTraits = getDesiredRootTraitSet(root);
     final Program program = getProgram();
@@ -163,14 +168,16 @@ public abstract class Prepare {
     }
     
     final RelNode rootRel4 = program.run(planner, root.rel, desiredTraits);
-    LOGGER.debug("Plan after physical tweaks: {}",
-        RelOptUtil.toString(rootRel4, SqlExplainLevel.ALL_ATTRIBUTES));
+    if (LOGGER.isDebugEnabled()) {
+      LOGGER.debug("Plan after physical tweaks: {}",
+          RelOptUtil.toString(rootRel4, SqlExplainLevel.ALL_ATTRIBUTES));
+    }
 
     return root.withRel(rootRel4);
   }
 
   private Program getProgram() {
-    // Allow a test to override the planner.
+    // Allow a test to override the default program.
     final List<Materialization> materializations = ImmutableList.of();
     final Holder<Program> holder = Holder.of(null);
     Hook.PROGRAM.run(Pair.of(materializations, holder));
@@ -225,16 +232,22 @@ public abstract class Prepare {
     	parameterRowType = cached.parameterRowType;
     	return implement(cached.root);
     }
-    SqlToRelConverter sqlToRelConverter =
-        getSqlToRelConverter(validator, catalogReader);
-    sqlToRelConverter.setExpand(THREAD_EXPAND.get());
+
+    final SqlToRelConverter.ConfigBuilder builder =
+        SqlToRelConverter.configBuilder()
+            .withTrimUnusedFields(true)
+            .withExpand(THREAD_EXPAND.get())
+            .withExplain(sqlQuery.getKind() == SqlKind.EXPLAIN);
+    final SqlToRelConverter sqlToRelConverter =
+        getSqlToRelConverter(validator, catalogReader, builder.build());
 
     SqlExplain sqlExplain = null;
     if (sqlQuery.getKind() == SqlKind.EXPLAIN) {
       // dig out the underlying SQL statement
       sqlExplain = (SqlExplain) sqlQuery;
       sqlQuery = sqlExplain.getExplicandum();
-      sqlToRelConverter.setIsExplain(sqlExplain.getDynamicParamCount());
+      sqlToRelConverter.setDynamicParamCountInExplain(
+          sqlExplain.getDynamicParamCount());
     }
 
     RelRoot root =
@@ -256,15 +269,15 @@ public abstract class Prepare {
     // storage and decorrelation
     if (sqlExplain != null) {
       SqlExplain.Depth explainDepth = sqlExplain.getDepth();
-      boolean explainAsXml = sqlExplain.isXml();
+      SqlExplainFormat format = sqlExplain.getFormat();
       SqlExplainLevel detailLevel = sqlExplain.getDetailLevel();
       switch (explainDepth) {
       case TYPE:
-        return createPreparedExplanation(
-            resultType, parameterRowType, null, explainAsXml, detailLevel);
+        return createPreparedExplanation(resultType, parameterRowType, null,
+            format, detailLevel);
       case LOGICAL:
-        return createPreparedExplanation(
-            null, parameterRowType, root, explainAsXml, detailLevel);
+        return createPreparedExplanation(null, parameterRowType, root, format,
+            detailLevel);
       default:
       }
     }
@@ -274,7 +287,7 @@ public abstract class Prepare {
     root = root.withRel(flattenTypes(root.rel, true));
 
     if (this.context.config().forceDecorrelate()) {
-      // Subquery decorrelation.
+      // Sub-query decorrelation.
       root = root.withRel(decorrelate(sqlToRelConverter, sqlQuery, root.rel));
     }
 
@@ -285,15 +298,12 @@ public abstract class Prepare {
 
     // Display physical plan after decorrelation.
     if (sqlExplain != null) {
-      SqlExplain.Depth explainDepth = sqlExplain.getDepth();
-      boolean explainAsXml = sqlExplain.isXml();
-      SqlExplainLevel detailLevel = sqlExplain.getDetailLevel();
-      switch (explainDepth) {
+      switch (sqlExplain.getDepth()) {
       case PHYSICAL:
       default:
         root = optimize(root, getMaterializations(), getLattices());
-        return createPreparedExplanation(
-            null, parameterRowType, root, explainAsXml, detailLevel);
+        return createPreparedExplanation(null, parameterRowType, root,
+            sqlExplain.getFormat(), sqlExplain.getDetailLevel());
       }
     }
 
@@ -342,7 +352,8 @@ public abstract class Prepare {
    */
   protected abstract SqlToRelConverter getSqlToRelConverter(
       SqlValidator validator,
-      CatalogReader catalogReader);
+      CatalogReader catalogReader,
+      SqlToRelConverter.Config config);
 
   public abstract RelNode flattenTypes(
       RelNode rootRel,
@@ -365,11 +376,12 @@ public abstract class Prepare {
    * @return Trimmed relational expression
    */
   protected RelRoot trimUnusedFields(RelRoot root) {
+    final SqlToRelConverter.Config config = SqlToRelConverter.configBuilder()
+        .withTrimUnusedFields(shouldTrim(root.rel))
+        .withExpand(THREAD_EXPAND.get())
+        .build();
     final SqlToRelConverter converter =
-        getSqlToRelConverter(
-            getSqlValidator(), catalogReader);
-    converter.setTrimUnusedFields(shouldTrim(root.rel));
-    converter.setExpand(THREAD_EXPAND.get());
+        getSqlToRelConverter(getSqlValidator(), catalogReader, config);
     final boolean ordered = !root.collation.getFieldCollations().isEmpty();
     final boolean dml = SqlKind.DML.contains(root.kind);
     return root.withRel(converter.trimUnusedFields(dml || ordered, root.rel));
@@ -382,17 +394,8 @@ public abstract class Prepare {
     return THREAD_TRIM.get() || RelOptUtil.countJoins(rootRel) < 2;
   }
 
-  /**
-   * Returns a relational expression which is to be substituted for an access
-   * to a SQL view.
-   *
-   * @param rowType Row type of the view
-   * @param queryString Body of the view
-   * @param schemaPath List of schema names wherein to find referenced tables
-   * @return Relational expression
-   */
   public RelRoot expandView(RelDataType rowType, String queryString,
-      List<String> schemaPath) {
+      List<String> schemaPath, List<String> viewPath) {
     throw new UnsupportedOperationException();
   }
 
@@ -409,7 +412,7 @@ public abstract class Prepare {
      * different schema path. */
     CatalogReader withSchemaPath(List<String> schemaPath);
 
-    PreparingTable getTable(List<String> names);
+    @Override PreparingTable getTable(List<String> names);
 
     ThreadLocal<CatalogReader> THREAD_LOCAL = new ThreadLocal<>();
   }
@@ -428,19 +431,19 @@ public abstract class Prepare {
     private final RelDataType rowType;
     private final RelDataType parameterRowType;
     private final RelRoot root;
-    private final boolean asXml;
+    private final SqlExplainFormat format;
     private final SqlExplainLevel detailLevel;
 
     public PreparedExplain(
         RelDataType rowType,
         RelDataType parameterRowType,
         RelRoot root,
-        boolean asXml,
+        SqlExplainFormat format,
         SqlExplainLevel detailLevel) {
       this.rowType = rowType;
       this.parameterRowType = parameterRowType;
       this.root = root;
-      this.asXml = asXml;
+      this.format = format;
       this.detailLevel = detailLevel;
     }
 
@@ -448,7 +451,7 @@ public abstract class Prepare {
       if (root == null) {
         return RelOptUtil.dumpType(rowType);
       } else {
-        return RelOptUtil.dumpPlan("", root.rel, asXml, detailLevel);
+        return RelOptUtil.dumpPlan("", root.rel, format, detailLevel);
       }
     }
 
@@ -468,8 +471,6 @@ public abstract class Prepare {
       return Collections.singletonList(
           Collections.<String>nCopies(4, null));
     }
-
-    public abstract Bindable getBindable();
   }
 
   /**
@@ -508,9 +509,10 @@ public abstract class Prepare {
     /**
      * Executes the prepared result.
      *
+     * @param cursorFactory How to map values into a cursor
      * @return producer of rows resulting from execution
      */
-    Bindable getBindable();
+    Bindable getBindable(Meta.CursorFactory cursorFactory);
   }
 
   /**
@@ -573,8 +575,6 @@ public abstract class Prepare {
     public RelNode getRootRel() {
       return rootRel;
     }
-
-    public abstract Bindable getBindable();
   }
 
   /** Describes that a given SQL query is materialized by a given table.

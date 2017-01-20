@@ -14,13 +14,18 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+package org.apache.calcite.sql;
+
+import org.apache.calcite.jdbc.CalcitePrepare;
 
 /**
- * Avatica-custom classes to access protected classes in Google Protobuf.
+ * Mix-in interface for {@link SqlNode} that allows DDL commands to be
+ * executed directly.
+ *
+ * <p>NOTE: Subject to change without notice.
  */
-@PackageMarker
-package com.google.protobuf;
+public interface SqlExecutableStatement {
+  void execute(CalcitePrepare.Context context);
+}
 
-import org.apache.calcite.avatica.util.PackageMarker;
-
-// End package-info.java
+// End SqlExecutableStatement.java

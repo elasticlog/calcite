@@ -126,6 +126,9 @@ public class Util {
   private static final Pattern JAVA_ID_PATTERN =
       Pattern.compile("[a-zA-Z_$][a-zA-Z0-9$]*");
 
+  private static final Charset DEFAULT_CHARSET =
+      Charset.forName(SaffronProperties.INSTANCE.defaultCharset().get());
+
   /**
    * Maps classes to the map of their enum values. Uses a weak map so that
    * classes are not prevented from being unloaded.
@@ -766,7 +769,7 @@ public class Util {
    *                                                      virtual machine
    */
   public static Charset getDefaultCharset() {
-    return Charset.forName(SaffronProperties.instance().defaultCharset.get());
+    return DEFAULT_CHARSET;
   }
 
   public static Error newInternal() {
@@ -1877,8 +1880,7 @@ public class Util {
       Class<T> clazz) {
     final T[] ts = clazz.getEnumConstants();
     if (ts == null) {
-      // not an enum type
-      return null;
+      throw new AssertionError("not an enum type");
     }
     ImmutableMap.Builder<String, T> builder = ImmutableMap.builder();
     for (T t : ts) {
@@ -2045,7 +2047,7 @@ public class Util {
 
   /** Returns all but the first {@code n} elements of a list. */
   public static <E> List<E> skip(List<E> list, int fromIndex) {
-    return list.subList(fromIndex, list.size());
+    return fromIndex == 0 ? list : list.subList(fromIndex, list.size());
   }
 
   public static List<Integer> range(final int end) {
@@ -2117,6 +2119,16 @@ public class Util {
       }
     }
     return -1;
+  }
+
+  /** Returns whether two collections have any elements in common. */
+  public static <E> boolean intersects(Collection<E> c0, Collection<E> c1) {
+    for (E e : c1) {
+      if (c0.contains(e)) {
+        return true;
+      }
+    }
+    return false;
   }
 
   /** Looks for a string within a list of strings, using a given
@@ -2344,6 +2356,29 @@ public class Util {
       return defaultValue;
     }
     return "".equals(v) || "true".equalsIgnoreCase(v);
+  }
+
+  /** Returns a copy of a list of lists, making the component lists immutable if
+   * they are not already. */
+  public static <E> List<List<E>>
+  immutableCopy(Iterable<? extends Iterable<E>> lists) {
+    int n = 0;
+    for (Iterable<E> list : lists) {
+      if (!(list instanceof ImmutableList)) {
+        ++n;
+      }
+    }
+    if (n == 0) {
+      // Lists are already immutable. Furthermore, if the outer list is
+      // immutable we will just return "lists" unchanged.
+      return ImmutableList.copyOf((Iterable) lists);
+    }
+    final ImmutableList.Builder<List<E>> builder =
+        ImmutableList.builder();
+    for (Iterable<E> list : lists) {
+      builder.add(ImmutableList.copyOf(list));
+    }
+    return builder.build();
   }
 
   //~ Inner Classes ----------------------------------------------------------

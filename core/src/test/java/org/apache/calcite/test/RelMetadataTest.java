@@ -34,6 +34,7 @@ import org.apache.calcite.rel.RelNode;
 import org.apache.calcite.rel.RelRoot;
 import org.apache.calcite.rel.core.Aggregate;
 import org.apache.calcite.rel.core.AggregateCall;
+import org.apache.calcite.rel.core.Correlate;
 import org.apache.calcite.rel.core.CorrelationId;
 import org.apache.calcite.rel.core.Join;
 import org.apache.calcite.rel.core.JoinRelType;
@@ -62,7 +63,6 @@ import org.apache.calcite.rel.metadata.RelMdCollation;
 import org.apache.calcite.rel.metadata.RelMetadataProvider;
 import org.apache.calcite.rel.metadata.RelMetadataQuery;
 import org.apache.calcite.rel.type.RelDataType;
-import org.apache.calcite.rel.type.RelDataTypeField;
 import org.apache.calcite.rex.RexBuilder;
 import org.apache.calcite.rex.RexLiteral;
 import org.apache.calcite.rex.RexNode;
@@ -70,6 +70,7 @@ import org.apache.calcite.schema.SchemaPlus;
 import org.apache.calcite.sql.fun.SqlStdOperatorTable;
 import org.apache.calcite.sql.type.SqlTypeName;
 import org.apache.calcite.tools.Frameworks;
+import org.apache.calcite.tools.RelBuilder;
 import org.apache.calcite.util.ImmutableBitSet;
 import org.apache.calcite.util.ImmutableIntList;
 
@@ -97,6 +98,7 @@ import java.util.Set;
 import static org.hamcrest.CoreMatchers.equalTo;
 import static org.hamcrest.CoreMatchers.instanceOf;
 import static org.hamcrest.CoreMatchers.is;
+import static org.hamcrest.CoreMatchers.isA;
 import static org.hamcrest.CoreMatchers.notNullValue;
 import static org.hamcrest.CoreMatchers.nullValue;
 import static org.junit.Assert.assertEquals;
@@ -642,7 +644,7 @@ public class RelMetadataTest extends SqlToRelTestBase {
 
   @Test public void testRowCountAggregateGroupingSets() {
     final String sql = "select deptno from emp\n"
-        + "group by grouping sets ((deptno), (empno, deptno))";
+        + "group by grouping sets ((deptno), (ename, deptno))";
     checkRowCount(sql, 2.8D); // EMP_SIZE / 10 * 2
     checkMaxRowCount(sql, Double.POSITIVE_INFINITY);
   }
@@ -814,11 +816,36 @@ public class RelMetadataTest extends SqlToRelTestBase {
    * "RelMdColumnUniqueness uses ImmutableBitSet.Builder twice, gets
    * NullPointerException"</a>. */
   @Test public void testJoinUniqueKeys() {
-    RelNode rel = convertSql("select * from emp join dept using (deptno)");
+    RelNode rel = convertSql("select * from emp join bonus using (ename)");
     final RelMetadataQuery mq = RelMetadataQuery.instance();
     Set<ImmutableBitSet> result = mq.getUniqueKeys(rel);
     assertThat(result.isEmpty(), is(true));
     assertUniqueConsistent(rel);
+  }
+
+  @Test public void testCorrelateUniqueKeys() {
+    final String sql = "select *\n"
+        + "from (select distinct deptno from emp) as e,\n"
+        + "  lateral (\n"
+        + "    select * from dept where dept.deptno = e.deptno)";
+    final RelNode rel = convertSql(sql);
+    final RelMetadataQuery mq = RelMetadataQuery.instance();
+
+    assertThat(rel, isA((Class) Project.class));
+    final Project project = (Project) rel;
+    final Set<ImmutableBitSet> result = mq.getUniqueKeys(project);
+    assertThat(result, sortsAs("[{0}]"));
+    if (false) {
+      assertUniqueConsistent(project);
+    }
+
+    assertThat(project.getInput(), isA((Class) Correlate.class));
+    final Correlate correlate = (Correlate) project.getInput();
+    final Set<ImmutableBitSet> result2 = mq.getUniqueKeys(correlate);
+    assertThat(result2, sortsAs("[{0}]"));
+    if (false) {
+      assertUniqueConsistent(correlate);
+    }
   }
 
   @Test public void testGroupByEmptyUniqueKeys() {
@@ -1281,48 +1308,104 @@ public class RelMetadataTest extends SqlToRelTestBase {
 
   private void checkPredicates(RelOptCluster cluster, RelOptTable empTable,
       RelOptTable deptTable) {
-    final RexBuilder rexBuilder = cluster.getRexBuilder();
+    final RelBuilder relBuilder = RelBuilder.proto().create(cluster, null);
     final RelMetadataQuery mq = RelMetadataQuery.instance();
+
     final LogicalTableScan empScan = LogicalTableScan.create(cluster, empTable);
+    relBuilder.push(empScan);
 
     RelOptPredicateList predicates =
         mq.getPulledUpPredicates(empScan);
     assertThat(predicates.pulledUpPredicates.isEmpty(), is(true));
 
-    final LogicalFilter filter =
-        LogicalFilter.create(empScan,
-            rexBuilder.makeCall(SqlStdOperatorTable.EQUALS,
-                rexBuilder.makeInputRef(empScan,
-                    empScan.getRowType().getFieldNames().indexOf("EMPNO")),
-                rexBuilder.makeExactLiteral(BigDecimal.ONE)));
+    relBuilder.filter(
+        relBuilder.equals(relBuilder.field("EMPNO"),
+            relBuilder.literal(BigDecimal.ONE)));
 
+    final RelNode filter = relBuilder.peek();
     predicates = mq.getPulledUpPredicates(filter);
     assertThat(predicates.pulledUpPredicates.toString(), is("[=($0, 1)]"));
 
     final LogicalTableScan deptScan =
         LogicalTableScan.create(cluster, deptTable);
+    relBuilder.push(deptScan);
 
-    final RelDataTypeField leftDeptnoField =
-        empScan.getRowType().getFieldList().get(
-            empScan.getRowType().getFieldNames().indexOf("DEPTNO"));
-    final RelDataTypeField rightDeptnoField =
-        deptScan.getRowType().getFieldList().get(
-            deptScan.getRowType().getFieldNames().indexOf("DEPTNO"));
-    final SemiJoin semiJoin =
-        SemiJoin.create(filter, deptScan,
-            rexBuilder.makeCall(SqlStdOperatorTable.EQUALS,
-                rexBuilder.makeInputRef(leftDeptnoField.getType(),
-                    leftDeptnoField.getIndex()),
-                rexBuilder.makeInputRef(rightDeptnoField.getType(),
-                    rightDeptnoField.getIndex()
-                        + empScan.getRowType().getFieldCount())),
-            ImmutableIntList.of(leftDeptnoField.getIndex()),
-            ImmutableIntList.of(rightDeptnoField.getIndex()
-                    + empScan.getRowType().getFieldCount()));
+    relBuilder.semiJoin(
+        relBuilder.equals(relBuilder.field(2, 0, "DEPTNO"),
+            relBuilder.field(2, 1, "DEPTNO")));
+    final SemiJoin semiJoin = (SemiJoin) relBuilder.build();
 
     predicates = mq.getPulledUpPredicates(semiJoin);
     assertThat(predicates.pulledUpPredicates, sortsAs("[=($0, 1)]"));
     assertThat(predicates.leftInferredPredicates, sortsAs("[]"));
+    assertThat(predicates.rightInferredPredicates.isEmpty(), is(true));
+
+    // Create a Join similar to the previous SemiJoin
+    relBuilder.push(filter);
+    relBuilder.push(deptScan);
+    relBuilder.join(JoinRelType.INNER,
+        relBuilder.equals(relBuilder.field(2, 0, "DEPTNO"),
+            relBuilder.field(2, 1, "DEPTNO")));
+
+    relBuilder.project(relBuilder.field("DEPTNO"));
+    final RelNode project = relBuilder.peek();
+    predicates = mq.getPulledUpPredicates(project);
+    // No inferred predicates, because we already know DEPTNO is NOT NULL
+    assertThat(predicates.pulledUpPredicates, sortsAs("[]"));
+    assertThat(project.getRowType().getFullTypeString(),
+        is("RecordType(INTEGER NOT NULL DEPTNO) NOT NULL"));
+    assertThat(predicates.leftInferredPredicates.isEmpty(), is(true));
+    assertThat(predicates.rightInferredPredicates.isEmpty(), is(true));
+
+    // Create a Join similar to the previous Join, but joining on MGR, which
+    // is nullable. From the join condition "e.MGR = d.DEPTNO" we can deduce
+    // the projected predicate "IS NOT NULL($0)".
+    relBuilder.push(filter);
+    relBuilder.push(deptScan);
+    relBuilder.join(JoinRelType.INNER,
+        relBuilder.equals(relBuilder.field(2, 0, "MGR"),
+            relBuilder.field(2, 1, "DEPTNO")));
+
+    relBuilder.project(relBuilder.field("MGR"));
+    final RelNode project2 = relBuilder.peek();
+    predicates = mq.getPulledUpPredicates(project2);
+    assertThat(predicates.pulledUpPredicates, sortsAs("[IS NOT NULL($0)]"));
+    assertThat(predicates.leftInferredPredicates.isEmpty(), is(true));
+    assertThat(predicates.rightInferredPredicates.isEmpty(), is(true));
+
+    // Create another similar Join. From the join condition
+    //   e.MGR - e.EMPNO = d.DEPTNO + e.MGR_COMM
+    // we can deduce the projected predicate
+    //   MGR IS NOT NULL OR MGR_COMM IS NOT NULL
+    //
+    // EMPNO is omitted because it is NOT NULL.
+    // MGR_COMM is a made-up nullable field.
+    relBuilder.push(filter);
+    relBuilder.project(
+        Iterables.concat(relBuilder.fields(),
+            ImmutableList.of(
+                relBuilder.alias(
+                    relBuilder.call(SqlStdOperatorTable.PLUS,
+                        relBuilder.field("MGR"),
+                        relBuilder.field("COMM")),
+                    "MGR_COMM"))));
+    relBuilder.push(deptScan);
+    relBuilder.join(JoinRelType.INNER,
+        relBuilder.equals(
+            relBuilder.call(SqlStdOperatorTable.MINUS,
+                relBuilder.field(2, 0, "MGR"),
+                relBuilder.field(2, 0, "EMPNO")),
+            relBuilder.call(SqlStdOperatorTable.PLUS,
+                relBuilder.field(2, 1, "DEPTNO"),
+                relBuilder.field(2, 0, "MGR_COMM"))));
+
+    relBuilder.project(relBuilder.field("MGR"), relBuilder.field("NAME"),
+        relBuilder.field("MGR_COMM"), relBuilder.field("COMM"));
+    final RelNode project3 = relBuilder.peek();
+    predicates = mq.getPulledUpPredicates(project3);
+    assertThat(predicates.pulledUpPredicates,
+        sortsAs("[OR(IS NOT NULL($0), IS NOT NULL($2))]"));
+    assertThat(predicates.leftInferredPredicates.isEmpty(), is(true));
     assertThat(predicates.rightInferredPredicates.isEmpty(), is(true));
   }
 
@@ -1350,8 +1433,7 @@ public class RelMetadataTest extends SqlToRelTestBase {
     final RelMetadataQuery mq = RelMetadataQuery.instance();
     RelOptPredicateList list = mq.getPulledUpPredicates(rel);
     assertThat(list.pulledUpPredicates,
-        sortsAs("[<($0, 10), =($3, 'y'), =($4, CAST('1'):INTEGER NOT NULL), "
-            + "IS NULL($1), IS NULL($2)]"));
+        sortsAs("[<($0, 10), =($3, 'y'), =($4, 1), IS NULL($1), IS NULL($2)]"));
   }
 
   @Test public void testPullUpPredicatesOnNullableConstant() {

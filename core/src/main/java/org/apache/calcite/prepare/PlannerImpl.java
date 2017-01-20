@@ -37,6 +37,7 @@ import org.apache.calcite.sql.SqlOperatorTable;
 import org.apache.calcite.sql.parser.SqlParseException;
 import org.apache.calcite.sql.parser.SqlParser;
 import org.apache.calcite.sql.validate.SqlConformance;
+import org.apache.calcite.sql.validate.SqlConformanceEnum;
 import org.apache.calcite.sql.validate.SqlValidator;
 import org.apache.calcite.sql2rel.RelDecorrelator;
 import org.apache.calcite.sql2rel.SqlRexConvertletTable;
@@ -198,7 +199,7 @@ public class PlannerImpl implements Planner {
         return connectionConfig.conformance();
       }
     }
-    return SqlConformance.DEFAULT;
+    return SqlConformanceEnum.DEFAULT;
   }
 
   public Pair<SqlNode, RelDataType> validateAndGetType(SqlNode sqlNode)
@@ -218,11 +219,11 @@ public class PlannerImpl implements Planner {
     assert validatedSqlNode != null;
     final RexBuilder rexBuilder = createRexBuilder();
     final RelOptCluster cluster = RelOptCluster.create(planner, rexBuilder);
+    final SqlToRelConverter.Config config = SqlToRelConverter.configBuilder()
+        .withTrimUnusedFields(false).withConvertTableAccess(false).build();
     final SqlToRelConverter sqlToRelConverter =
         new SqlToRelConverter(new ViewExpanderImpl(), validator,
-            createCatalogReader(), cluster, convertletTable);
-    sqlToRelConverter.setTrimUnusedFields(false);
-    sqlToRelConverter.enableTableAccessConversion(false);
+            createCatalogReader(), cluster, convertletTable, config);
     root =
         sqlToRelConverter.convertQuery(validatedSqlNode, false, true);
     root = root.withRel(sqlToRelConverter.flattenTypes(root.rel, true));
@@ -234,8 +235,8 @@ public class PlannerImpl implements Planner {
   /** Implements {@link org.apache.calcite.plan.RelOptTable.ViewExpander}
    * interface for {@link org.apache.calcite.tools.Planner}. */
   public class ViewExpanderImpl implements ViewExpander {
-    public RelRoot expandView(RelDataType rowType, String queryString,
-        List<String> schemaPath) {
+    @Override public RelRoot expandView(RelDataType rowType, String queryString,
+      List<String> schemaPath, List<String> viewPath) {
       SqlParser parser = SqlParser.create(queryString, parserConfig);
       SqlNode sqlNode;
       try {
@@ -255,12 +256,11 @@ public class PlannerImpl implements Planner {
 
       final RexBuilder rexBuilder = createRexBuilder();
       final RelOptCluster cluster = RelOptCluster.create(planner, rexBuilder);
+      final SqlToRelConverter.Config config = SqlToRelConverter.configBuilder()
+          .withTrimUnusedFields(false).withConvertTableAccess(false).build();
       final SqlToRelConverter sqlToRelConverter =
           new SqlToRelConverter(new ViewExpanderImpl(), validator,
-              catalogReader, cluster, convertletTable);
-
-      sqlToRelConverter.setTrimUnusedFields(false);
-      sqlToRelConverter.enableTableAccessConversion(false);
+              catalogReader, cluster, convertletTable, config);
 
       root = sqlToRelConverter.convertQuery(validatedSqlNode, true, false);
       root = root.withRel(sqlToRelConverter.flattenTypes(root.rel, true));

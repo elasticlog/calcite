@@ -50,8 +50,6 @@ abstract class AbstractNamespace implements SqlValidatorNamespace {
   /** As {@link #rowType}, but not necessarily a struct. */
   protected RelDataType type;
 
-  private boolean forceNullable;
-
   protected final SqlNode enclosingNode;
 
   //~ Constructors -----------------------------------------------------------
@@ -87,15 +85,6 @@ abstract class AbstractNamespace implements SqlValidatorNamespace {
         Util.permAssert(
             type != null,
             "validateImpl() returned null");
-        if (forceNullable) {
-          // REVIEW jvs 10-Oct-2005: This may not be quite right
-          // if it means that nullability will be forced in the
-          // ON clause where it doesn't belong.
-          type =
-              validator.getTypeFactory().createTypeWithNullability(
-                  type,
-                  true);
-        }
         setType(type);
       } finally {
         status = SqlValidatorImpl.Status.VALID;
@@ -160,7 +149,7 @@ abstract class AbstractNamespace implements SqlValidatorNamespace {
 
   public boolean fieldExists(String name) {
     final RelDataType rowType = getRowType();
-    return validator.catalogReader.field(rowType, name) != null;
+    return validator.catalogReader.nameMatcher().field(rowType, name) != null;
   }
 
   public List<Pair<SqlNode, SqlMonotonicity>> getMonotonicExprs() {
@@ -172,7 +161,6 @@ abstract class AbstractNamespace implements SqlValidatorNamespace {
   }
 
   public void makeNullable() {
-    forceNullable = true;
   }
 
   public String translate(String name) {

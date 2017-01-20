@@ -90,7 +90,7 @@ public class PigRelBuilderTest {
   @Test public void testGroup() {
     // Syntax:
     //   alias = GROUP alias { ALL | BY expression}
-    //     [, alias ALL | BY expression …] [USING 'collected' | 'merge']
+    //     [, alias ALL | BY expression ...] [USING 'collected' | 'merge']
     //     [PARTITION BY partitioner] [PARALLEL n];
     // Equivalent to Pig Latin:
     //   r = GROUP e BY (deptno, job);
@@ -119,7 +119,8 @@ public class PigRelBuilderTest {
         .build();
     final String plan = "LogicalJoin(condition=[=($0, $2)], joinType=[inner])\n"
         + "  LogicalAggregate(group=[{0}], EMP=[COLLECT($8)])\n"
-        + "    LogicalProject(EMPNO=[$0], ENAME=[$1], JOB=[$2], MGR=[$3], HIREDATE=[$4], SAL=[$5], COMM=[$6], DEPTNO=[$7], $f8=[ROW($0, $1, $2, $3, $4, $5, $6, $7)])\n      LogicalTableScan(table=[[scott, EMP]])\n  LogicalAggregate(group=[{0}], DEPT=[COLLECT($3)])\n"
+        + "    LogicalProject(EMPNO=[$0], ENAME=[$1], JOB=[$2], MGR=[$3], HIREDATE=[$4], SAL=[$5], COMM=[$6], DEPTNO=[$7], $f8=[ROW($0, $1, $2, $3, $4, $5, $6, $7)])\n"
+        + "      LogicalTableScan(table=[[scott, EMP]])\n  LogicalAggregate(group=[{0}], DEPT=[COLLECT($3)])\n"
         + "    LogicalProject(DEPTNO=[$0], DNAME=[$1], LOC=[$2], $f3=[ROW($0, $1, $2)])\n"
         + "      LogicalTableScan(table=[[scott, DEPT]])\n";
     assertThat(str(root), is(plan));

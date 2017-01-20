@@ -19,11 +19,14 @@ package org.apache.calcite.adapter.csv;
 import org.apache.calcite.adapter.java.JavaTypeFactory;
 import org.apache.calcite.linq4j.Enumerator;
 import org.apache.calcite.rel.type.RelDataType;
+import org.apache.calcite.sql.type.SqlTypeName;
 import org.apache.calcite.util.Pair;
 
 import org.apache.commons.lang3.time.FastDateFormat;
 
 import au.com.bytecode.opencsv.CSVReader;
+
+import com.google.common.base.Throwables;
 
 import java.io.File;
 import java.io.FileInputStream;
@@ -36,6 +39,7 @@ import java.util.ArrayList;
 import java.util.Date;
 import java.util.List;
 import java.util.TimeZone;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.zip.GZIPInputStream;
 
 
@@ -46,6 +50,7 @@ import java.util.zip.GZIPInputStream;
 class CsvEnumerator<E> implements Enumerator<E> {
   private final CSVReader reader;
   private final String[] filterValues;
+  private final AtomicBoolean cancelFlag;
   private final RowConverter<E> rowConverter;
   private E current;
 
@@ -61,21 +66,29 @@ class CsvEnumerator<E> implements Enumerator<E> {
         FastDateFormat.getInstance("yyyy-MM-dd HH:mm:ss", gmt);
   }
 
-  public CsvEnumerator(File file, List<CsvFieldType> fieldTypes) {
-    this(file, fieldTypes, identityList(fieldTypes.size()));
+  public CsvEnumerator(File file, AtomicBoolean cancelFlag,
+      List<CsvFieldType> fieldTypes) {
+    this(file, cancelFlag, fieldTypes, identityList(fieldTypes.size()));
   }
 
-  public CsvEnumerator(File file, List<CsvFieldType> fieldTypes, int[] fields) {
+  public CsvEnumerator(File file, AtomicBoolean cancelFlag,
+      List<CsvFieldType> fieldTypes, int[] fields) {
     //noinspection unchecked
-    this(file, null, (RowConverter<E>) converter(fieldTypes, fields));
+    this(file, cancelFlag, false, null,
+        (RowConverter<E>) converter(fieldTypes, fields));
   }
 
-  public CsvEnumerator(File file, String[] filterValues,
-      RowConverter<E> rowConverter) {
+  public CsvEnumerator(File file, AtomicBoolean cancelFlag, boolean stream,
+      String[] filterValues, RowConverter<E> rowConverter) {
+    this.cancelFlag = cancelFlag;
     this.rowConverter = rowConverter;
     this.filterValues = filterValues;
     try {
-      this.reader = openCsv(file);
+      if (stream) {
+        this.reader = new CsvStreamReader(file);
+      } else {
+        this.reader = openCsv(file);
+      }
       this.reader.readNext(); // skip header row
     } catch (IOException e) {
       throw new RuntimeException(e);
@@ -92,13 +105,22 @@ class CsvEnumerator<E> implements Enumerator<E> {
     }
   }
 
-  /** Deduces the names and types of a table's columns by reading the first line
-   * of a CSV file. */
   static RelDataType deduceRowType(JavaTypeFactory typeFactory, File file,
       List<CsvFieldType> fieldTypes) {
+    return deduceRowType(typeFactory, file, fieldTypes, false);
+  }
+
+  /** Deduces the names and types of a table's columns by reading the first line
+  * of a CSV file. */
+  static RelDataType deduceRowType(JavaTypeFactory typeFactory, File file,
+      List<CsvFieldType> fieldTypes, Boolean stream) {
     final List<RelDataType> types = new ArrayList<>();
     final List<String> names = new ArrayList<>();
     CSVReader reader = null;
+    if (stream) {
+      names.add(CsvSchemaFactory.ROWTIME_COLUMN_NAME);
+      types.add(typeFactory.createSqlType(SqlTypeName.TIMESTAMP));
+    }
     try {
       reader = openCsv(file);
       final String[] strings = reader.readNext();
@@ -150,7 +172,7 @@ class CsvEnumerator<E> implements Enumerator<E> {
     return typeFactory.createStructType(Pair.zip(names, types));
   }
 
-  private static CSVReader openCsv(File file) throws IOException {
+  public static CSVReader openCsv(File file) throws IOException {
     final Reader fileReader;
     if (file.getName().endsWith(".gz")) {
       final GZIPInputStream inputStream =
@@ -170,8 +192,19 @@ class CsvEnumerator<E> implements Enumerator<E> {
     try {
     outer:
       for (;;) {
+        if (cancelFlag.get()) {
+          return false;
+        }
         final String[] strings = reader.readNext();
         if (strings == null) {
+          if (reader instanceof CsvStreamReader) {
+            try {
+              Thread.sleep(CsvStreamReader.DEFAULT_MONITOR_DELAY);
+            } catch (InterruptedException e) {
+              throw Throwables.propagate(e);
+            }
+            continue;
+          }
           current = null;
           reader.close();
           return false;
@@ -300,17 +333,44 @@ class CsvEnumerator<E> implements Enumerator<E> {
   static class ArrayRowConverter extends RowConverter<Object[]> {
     private final CsvFieldType[] fieldTypes;
     private final int[] fields;
+    //whether the row to convert is from a stream
+    private final boolean stream;
 
     ArrayRowConverter(List<CsvFieldType> fieldTypes, int[] fields) {
       this.fieldTypes = fieldTypes.toArray(new CsvFieldType[fieldTypes.size()]);
       this.fields = fields;
+      this.stream = false;
+    }
+
+    ArrayRowConverter(List<CsvFieldType> fieldTypes, int[] fields, boolean stream) {
+      this.fieldTypes = fieldTypes.toArray(new CsvFieldType[fieldTypes.size()]);
+      this.fields = fields;
+      this.stream = stream;
     }
 
     public Object[] convertRow(String[] strings) {
+      if (stream) {
+        return convertStreamRow(strings);
+      } else {
+        return convertNormalRow(strings);
+      }
+    }
+
+    public Object[] convertNormalRow(String[] strings) {
       final Object[] objects = new Object[fields.length];
       for (int i = 0; i < fields.length; i++) {
         int field = fields[i];
         objects[i] = convert(fieldTypes[field], strings[field]);
+      }
+      return objects;
+    }
+
+    public Object[] convertStreamRow(String[] strings) {
+      final Object[] objects = new Object[fields.length + 1];
+      objects[0] = System.currentTimeMillis();
+      for (int i = 0; i < fields.length; i++) {
+        int field = fields[i];
+        objects[i + 1] = convert(fieldTypes[field], strings[field]);
       }
       return objects;
     }

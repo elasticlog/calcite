@@ -31,10 +31,12 @@ import org.apache.calcite.rel.rules.FilterJoinRule;
 import org.apache.calcite.rel.rules.JoinProjectTransposeRule;
 import org.apache.calcite.rel.rules.ProjectFilterTransposeRule;
 import org.apache.calcite.rel.rules.ProjectMergeRule;
+import org.apache.calcite.rel.rules.ProjectRemoveRule;
 import org.apache.calcite.rex.RexNode;
 import org.apache.calcite.rex.RexUtil;
 import org.apache.calcite.schema.Table;
 import org.apache.calcite.schema.impl.StarTable;
+import org.apache.calcite.sql.SqlExplainFormat;
 import org.apache.calcite.sql.SqlExplainLevel;
 import org.apache.calcite.tools.Program;
 import org.apache.calcite.tools.Programs;
@@ -271,19 +273,20 @@ public class RelOptMaterialization {
             JoinProjectTransposeRule.RIGHT_PROJECT,
             JoinProjectTransposeRule.LEFT_PROJECT,
             FilterJoinRule.FilterIntoJoinRule.FILTER_ON_JOIN,
+            ProjectRemoveRule.INSTANCE,
             ProjectMergeRule.INSTANCE),
         false,
         DefaultRelMetadataProvider.INSTANCE);
     if (CalcitePrepareImpl.DEBUG) {
       System.out.println(
-          RelOptUtil.dumpPlan(
-              "before", rel, false, SqlExplainLevel.DIGEST_ATTRIBUTES));
+          RelOptUtil.dumpPlan("before", rel, SqlExplainFormat.TEXT,
+              SqlExplainLevel.DIGEST_ATTRIBUTES));
     }
     final RelNode rel2 = program.run(null, rel, null);
     if (CalcitePrepareImpl.DEBUG) {
       System.out.println(
-          RelOptUtil.dumpPlan(
-              "after", rel2, false, SqlExplainLevel.DIGEST_ATTRIBUTES));
+          RelOptUtil.dumpPlan("after", rel2, SqlExplainFormat.TEXT,
+              SqlExplainLevel.DIGEST_ATTRIBUTES));
     }
     return rel2;
   }

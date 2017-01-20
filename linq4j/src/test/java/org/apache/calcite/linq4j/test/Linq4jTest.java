@@ -186,6 +186,7 @@ public class Linq4jTest {
                   }
                 })
             .toList();
+
     assertEquals(
         "[#0: Fred, #1: Eric, #2: Janet, #3: Bill]", nameSeqs.toString());
   }

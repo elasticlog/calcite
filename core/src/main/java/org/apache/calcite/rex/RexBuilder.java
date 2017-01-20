@@ -38,7 +38,6 @@ import org.apache.calcite.sql.SqlUtil;
 import org.apache.calcite.sql.fun.SqlCountAggFunction;
 import org.apache.calcite.sql.fun.SqlStdOperatorTable;
 import org.apache.calcite.sql.type.ArraySqlType;
-import org.apache.calcite.sql.type.IntervalSqlType;
 import org.apache.calcite.sql.type.MapSqlType;
 import org.apache.calcite.sql.type.MultisetSqlType;
 import org.apache.calcite.sql.type.SqlTypeFamily;
@@ -53,6 +52,7 @@ import com.google.common.collect.ImmutableList;
 import com.google.common.collect.Lists;
 
 import java.math.BigDecimal;
+import java.math.MathContext;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Calendar;
@@ -73,7 +73,8 @@ public class RexBuilder {
    */
   public static final SqlSpecialOperator GET_OPERATOR =
       new SqlSpecialOperator("_get", SqlKind.OTHER_FUNCTION);
-  public static final Function<RelDataTypeField, RexInputRef> TO_INPUT_REF =
+
+  private static final Function<RelDataTypeField, RexInputRef> TO_INPUT_REF =
       new Function<RelDataTypeField, RexInputRef>() {
         public RexInputRef apply(RelDataTypeField input) {
           return new RexInputRef(input.getIndex(), input.getType());
@@ -509,19 +510,40 @@ public class RexBuilder {
                   calendar.getTimeInMillis(),
                   DateTimeUtils.powerX(10, 3 - scale)));
           break;
-        case INTERVAL_DAY_TIME:
+        case INTERVAL_DAY:
+        case INTERVAL_DAY_HOUR:
+        case INTERVAL_DAY_MINUTE:
+        case INTERVAL_DAY_SECOND:
+        case INTERVAL_HOUR:
+        case INTERVAL_HOUR_MINUTE:
+        case INTERVAL_HOUR_SECOND:
+        case INTERVAL_MINUTE:
+        case INTERVAL_MINUTE_SECOND:
+        case INTERVAL_SECOND:
           assert value instanceof BigDecimal;
-          BigDecimal value2 = (BigDecimal) value;
-          final BigDecimal multiplier =
-              literal.getType().getIntervalQualifier().getStartUnit()
-                  .multiplier;
           typeName = type.getSqlTypeName();
+          switch (typeName) {
+          case BIGINT:
+          case INTEGER:
+          case SMALLINT:
+          case TINYINT:
+          case FLOAT:
+          case REAL:
+          case DECIMAL:
+            BigDecimal value2 = (BigDecimal) value;
+            final BigDecimal multiplier =
+                baseUnit(literal.getTypeName()).multiplier;
+            final BigDecimal divider =
+                literal.getTypeName().getEndUnit().multiplier;
+            value = value2.multiply(multiplier)
+                .divide(divider, 0, BigDecimal.ROUND_HALF_DOWN);
+          }
+
           // Not all types are allowed for literals
           switch (typeName) {
           case INTEGER:
             typeName = SqlTypeName.BIGINT;
           }
-          value = value2.divide(multiplier, 0, BigDecimal.ROUND_HALF_DOWN);
         }
         final RexLiteral literal2 =
             makeLiteral(value, type, typeName);
@@ -532,9 +554,6 @@ public class RexBuilder {
         }
         return literal2;
       }
-    } else if (SqlTypeUtil.isInterval(type)
-        && SqlTypeUtil.isExactNumeric(exp.getType())) {
-      return makeCastExactToInterval(type, exp);
     } else if (SqlTypeUtil.isExactNumeric(type)
         && SqlTypeUtil.isInterval(exp.getType())) {
       return makeCastIntervalToExact(type, exp);
@@ -548,7 +567,18 @@ public class RexBuilder {
     return makeAbstractCast(type, exp);
   }
 
-  private boolean canRemoveCastFromLiteral(RelDataType toType, Comparable value,
+  /** Returns the lowest granularity unit for the given unit.
+   * YEAR and MONTH intervals are stored as months;
+   * HOUR, MINUTE, SECOND intervals are stored as milliseconds. */
+  protected static TimeUnit baseUnit(SqlTypeName unit) {
+    if (unit.isYearMonth()) {
+      return TimeUnit.MONTH;
+    } else {
+      return TimeUnit.MILLISECOND;
+    }
+  }
+
+  boolean canRemoveCastFromLiteral(RelDataType toType, Comparable value,
       SqlTypeName fromTypeName) {
     final SqlTypeName sqlType = toType.getSqlTypeName();
     if (!RexLiteral.valueMatchesType(value, sqlType, false)) {
@@ -604,60 +634,44 @@ public class RexBuilder {
   }
 
   private RexNode makeCastIntervalToExact(RelDataType toType, RexNode exp) {
-    IntervalSqlType intervalType = (IntervalSqlType) exp.getType();
-    TimeUnit endUnit = intervalType.getIntervalQualifier().getEndUnit();
-    if (endUnit == null) {
-      endUnit = intervalType.getIntervalQualifier().getStartUnit();
-    }
-    int scale = 0;
-    if (endUnit == TimeUnit.SECOND) {
-      scale = Math.min(
-          intervalType.getIntervalQualifier()
-              .getFractionalSecondPrecision(typeFactory.getTypeSystem()),
-          3);
-    }
-    BigDecimal multiplier = endUnit.multiplier.scaleByPowerOfTen(-scale);
-    RexNode value = decodeIntervalOrDecimal(exp);
-    if (multiplier.longValue() != 1) {
-      value = makeCall(
-          SqlStdOperatorTable.DIVIDE_INTEGER,
-          value, makeBigintLiteral(multiplier));
-    }
+    final TimeUnit endUnit = exp.getType().getSqlTypeName().getEndUnit();
+    final TimeUnit baseUnit = baseUnit(exp.getType().getSqlTypeName());
+    final BigDecimal multiplier = baseUnit.multiplier;
+    final int scale = 0;
+    BigDecimal divider = endUnit.multiplier.scaleByPowerOfTen(-scale);
+    RexNode value = multiplyDivide(decodeIntervalOrDecimal(exp),
+        multiplier, divider);
     if (scale > 0) {
       RelDataType decimalType =
           getTypeFactory().createSqlType(
               SqlTypeName.DECIMAL,
-              scale + intervalType.getPrecision(),
+              scale + exp.getType().getPrecision(),
               scale);
       value = encodeIntervalOrDecimal(value, decimalType, false);
     }
     return ensureType(toType, value, false);
   }
 
-  private RexNode makeCastExactToInterval(RelDataType toType, RexNode exp) {
-    IntervalSqlType intervalType = (IntervalSqlType) toType;
-    TimeUnit endUnit = intervalType.getIntervalQualifier().getEndUnit();
-    if (endUnit == null) {
-      endUnit = intervalType.getIntervalQualifier().getStartUnit();
+  public RexNode multiplyDivide(RexNode e, BigDecimal multiplier,
+      BigDecimal divider) {
+    assert multiplier.signum() > 0;
+    assert divider.signum() > 0;
+    switch (multiplier.compareTo(divider)) {
+    case 0:
+      return e;
+    case 1:
+      // E.g. multiplyDivide(e, 1000, 10) ==> e * 100
+      return makeCall(SqlStdOperatorTable.MULTIPLY, e,
+          makeExactLiteral(
+              multiplier.divide(divider, BigDecimal.ROUND_UNNECESSARY)));
+    case -1:
+      // E.g. multiplyDivide(e, 10, 1000) ==> e / 100
+      return makeCall(SqlStdOperatorTable.DIVIDE_INTEGER, e,
+          makeExactLiteral(
+              divider.divide(multiplier, BigDecimal.ROUND_UNNECESSARY)));
+    default:
+      throw new AssertionError(multiplier + "/" + divider);
     }
-    int scale = 0;
-    if (endUnit == TimeUnit.SECOND) {
-      scale = Math.min(
-          intervalType.getIntervalQualifier()
-              .getFractionalSecondPrecision(typeFactory.getTypeSystem()),
-          3);
-    }
-    BigDecimal multiplier = endUnit.multiplier.scaleByPowerOfTen(-scale);
-    RelDataType decimalType =
-        getTypeFactory().createSqlType(SqlTypeName.DECIMAL,
-            scale + intervalType.getPrecision(),
-            scale);
-    RexNode value = decodeIntervalOrDecimal(ensureType(decimalType, exp, true));
-    if (multiplier.longValue() != 1) {
-      value = makeCall(SqlStdOperatorTable.MULTIPLY,
-          value, makeExactLiteral(multiplier));
-    }
-    return encodeIntervalOrDecimal(value, toType, false);
   }
 
   /**
@@ -738,24 +752,6 @@ public class RexBuilder {
         type,
         SqlStdOperatorTable.REINTERPRET,
         args);
-  }
-
-  /**
-   * Makes an expression which converts a value of type T to a value of type T
-   * NOT NULL, or throws if the value is NULL. If the expression is already
-   * NOT NULL, does nothing.
-   */
-  public RexNode makeNotNullCast(RexNode expr) {
-    RelDataType type = expr.getType();
-    if (!type.isNullable()) {
-      return expr;
-    }
-    RelDataType typeNotNull =
-        getTypeFactory().createTypeWithNullability(type, false);
-    return new RexCall(
-        typeNotNull,
-        SqlStdOperatorTable.CAST,
-        ImmutableList.of(expr));
   }
 
   /**
@@ -892,8 +888,15 @@ public class RexBuilder {
       }
     } else {
       int precision = bd.unscaledValue().abs().toString().length();
-      relType =
-          typeFactory.createSqlType(SqlTypeName.DECIMAL, precision, scale);
+      if (precision > scale) {
+        // bd is greater than or equal to 1
+        relType =
+            typeFactory.createSqlType(SqlTypeName.DECIMAL, precision, scale);
+      } else {
+        // bd is less than 1
+        relType =
+            typeFactory.createSqlType(SqlTypeName.DECIMAL, scale + 1, scale);
+      }
     }
     return makeExactLiteral(bd, relType);
   }
@@ -1076,7 +1079,8 @@ public class RexBuilder {
   }
 
   /**
-   * Creates an interval literal.
+   * Creates a literal representing an interval type, for example
+   * {@code YEAR TO MONTH} or {@code DOW}.
    */
   public RexLiteral makeIntervalLiteral(
       SqlIntervalQualifier intervalQualifier) {
@@ -1085,7 +1089,8 @@ public class RexBuilder {
   }
 
   /**
-   * Creates an interval literal.
+   * Creates a literal representing an interval value, for example
+   * {@code INTERVAL '3-7' YEAR TO MONTH}.
    */
   public RexLiteral makeIntervalLiteral(
       BigDecimal v,
@@ -1093,8 +1098,7 @@ public class RexBuilder {
     return makeLiteral(
         v,
         typeFactory.createSqlIntervalType(intervalQualifier),
-        intervalQualifier.isYearMonth() ? SqlTypeName.INTERVAL_YEAR_MONTH
-            : SqlTypeName.INTERVAL_DAY_TIME);
+        intervalQualifier.typeName());
   }
 
   /**
@@ -1270,8 +1274,19 @@ public class RexBuilder {
       return makeDateLiteral((Calendar) value);
     case TIMESTAMP:
       return makeTimestampLiteral((Calendar) value, type.getPrecision());
+    case INTERVAL_YEAR:
     case INTERVAL_YEAR_MONTH:
-    case INTERVAL_DAY_TIME:
+    case INTERVAL_MONTH:
+    case INTERVAL_DAY:
+    case INTERVAL_DAY_HOUR:
+    case INTERVAL_DAY_MINUTE:
+    case INTERVAL_DAY_SECOND:
+    case INTERVAL_HOUR:
+    case INTERVAL_HOUR_MINUTE:
+    case INTERVAL_HOUR_SECOND:
+    case INTERVAL_MINUTE:
+    case INTERVAL_MINUTE_SECOND:
+    case INTERVAL_SECOND:
       return makeIntervalLiteral((BigDecimal) value,
           type.getIntervalQualifier());
     case MAP:
@@ -1343,19 +1358,36 @@ public class RexBuilder {
     case INTEGER:
     case BIGINT:
     case DECIMAL:
+    case INTERVAL_YEAR:
     case INTERVAL_YEAR_MONTH:
-    case INTERVAL_DAY_TIME:
+    case INTERVAL_MONTH:
+    case INTERVAL_DAY:
+    case INTERVAL_DAY_HOUR:
+    case INTERVAL_DAY_MINUTE:
+    case INTERVAL_DAY_SECOND:
+    case INTERVAL_HOUR:
+    case INTERVAL_HOUR_MINUTE:
+    case INTERVAL_HOUR_SECOND:
+    case INTERVAL_MINUTE:
+    case INTERVAL_MINUTE_SECOND:
+    case INTERVAL_SECOND:
       if (o instanceof BigDecimal) {
         return o;
       }
       return new BigDecimal(((Number) o).longValue());
     case FLOAT:
+      if (o instanceof BigDecimal) {
+        return o;
+      }
+      return new BigDecimal(((Number) o).doubleValue(), MathContext.DECIMAL32)
+          .stripTrailingZeros();
     case REAL:
     case DOUBLE:
       if (o instanceof BigDecimal) {
         return o;
       }
-      return new BigDecimal(((Number) o).doubleValue());
+      return new BigDecimal(((Number) o).doubleValue(), MathContext.DECIMAL64)
+          .stripTrailingZeros();
     case CHAR:
     case VARCHAR:
       if (o instanceof NlsString) {

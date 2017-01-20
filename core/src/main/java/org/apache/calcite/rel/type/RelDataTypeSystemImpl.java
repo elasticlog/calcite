@@ -37,15 +37,26 @@ public abstract class RelDataTypeSystemImpl implements RelDataTypeSystem {
     switch (typeName) {
     case DECIMAL:
       return getMaxNumericScale();
-    case INTERVAL_DAY_TIME:
+    case INTERVAL_YEAR:
     case INTERVAL_YEAR_MONTH:
+    case INTERVAL_MONTH:
+    case INTERVAL_DAY:
+    case INTERVAL_DAY_HOUR:
+    case INTERVAL_DAY_MINUTE:
+    case INTERVAL_DAY_SECOND:
+    case INTERVAL_HOUR:
+    case INTERVAL_HOUR_MINUTE:
+    case INTERVAL_HOUR_SECOND:
+    case INTERVAL_MINUTE:
+    case INTERVAL_MINUTE_SECOND:
+    case INTERVAL_SECOND:
       return SqlTypeName.MAX_INTERVAL_FRACTIONAL_SECOND_PRECISION;
     default:
       return -1;
     }
   }
 
-  public int getDefaultPrecision(SqlTypeName typeName) {
+  @Override public int getDefaultPrecision(SqlTypeName typeName) {
     //Following BasicSqlType precision as the default
     switch (typeName) {
     case CHAR:
@@ -55,8 +66,19 @@ public abstract class RelDataTypeSystemImpl implements RelDataTypeSystem {
       return 1;
     case DECIMAL:
       return getMaxNumericPrecision();
-    case INTERVAL_DAY_TIME:
+    case INTERVAL_YEAR:
     case INTERVAL_YEAR_MONTH:
+    case INTERVAL_MONTH:
+    case INTERVAL_DAY:
+    case INTERVAL_DAY_HOUR:
+    case INTERVAL_DAY_MINUTE:
+    case INTERVAL_DAY_SECOND:
+    case INTERVAL_HOUR:
+    case INTERVAL_HOUR_MINUTE:
+    case INTERVAL_HOUR_SECOND:
+    case INTERVAL_MINUTE:
+    case INTERVAL_MINUTE_SECOND:
+    case INTERVAL_SECOND:
       return SqlTypeName.DEFAULT_INTERVAL_START_PRECISION;
     case BOOLEAN:
       return 1;
@@ -86,7 +108,7 @@ public abstract class RelDataTypeSystemImpl implements RelDataTypeSystem {
     }
   }
 
-  public int getMaxPrecision(SqlTypeName typeName) {
+  @Override public int getMaxPrecision(SqlTypeName typeName) {
     switch (typeName) {
     case DECIMAL:
       return getMaxNumericPrecision();
@@ -99,23 +121,34 @@ public abstract class RelDataTypeSystemImpl implements RelDataTypeSystem {
     case TIME:
     case TIMESTAMP:
       return SqlTypeName.MAX_DATETIME_PRECISION;
-    case INTERVAL_DAY_TIME:
+    case INTERVAL_YEAR:
     case INTERVAL_YEAR_MONTH:
+    case INTERVAL_MONTH:
+    case INTERVAL_DAY:
+    case INTERVAL_DAY_HOUR:
+    case INTERVAL_DAY_MINUTE:
+    case INTERVAL_DAY_SECOND:
+    case INTERVAL_HOUR:
+    case INTERVAL_HOUR_MINUTE:
+    case INTERVAL_HOUR_SECOND:
+    case INTERVAL_MINUTE:
+    case INTERVAL_MINUTE_SECOND:
+    case INTERVAL_SECOND:
       return SqlTypeName.MAX_INTERVAL_START_PRECISION;
     default:
       return getDefaultPrecision(typeName);
     }
   }
 
-  public int getMaxNumericScale() {
+  @Override public int getMaxNumericScale() {
     return 19;
   }
 
-  public int getMaxNumericPrecision() {
+  @Override public int getMaxNumericPrecision() {
     return 19;
   }
 
-  public String getLiteral(SqlTypeName typeName, boolean isPrefix) {
+  @Override public String getLiteral(SqlTypeName typeName, boolean isPrefix) {
     switch(typeName) {
     case VARBINARY:
     case VARCHAR:
@@ -125,9 +158,20 @@ public abstract class RelDataTypeSystemImpl implements RelDataTypeSystem {
       return isPrefix ? "x'" : "'";
     case TIMESTAMP:
       return isPrefix ? "TIMESTAMP '" : "'";
-    case INTERVAL_DAY_TIME:
+    case INTERVAL_DAY:
+    case INTERVAL_DAY_HOUR:
+    case INTERVAL_DAY_MINUTE:
+    case INTERVAL_DAY_SECOND:
+    case INTERVAL_HOUR:
+    case INTERVAL_HOUR_MINUTE:
+    case INTERVAL_HOUR_SECOND:
+    case INTERVAL_MINUTE:
+    case INTERVAL_MINUTE_SECOND:
+    case INTERVAL_SECOND:
       return isPrefix ? "INTERVAL '" : "' DAY";
+    case INTERVAL_YEAR:
     case INTERVAL_YEAR_MONTH:
+    case INTERVAL_MONTH:
       return isPrefix ? "INTERVAL '" : "' YEAR TO MONTH";
     case TIME:
       return isPrefix ? "TIME '" : "'";
@@ -140,7 +184,7 @@ public abstract class RelDataTypeSystemImpl implements RelDataTypeSystem {
     }
   }
 
-  public boolean isCaseSensitive(SqlTypeName typeName) {
+  @Override public boolean isCaseSensitive(SqlTypeName typeName) {
     switch(typeName) {
     case CHAR:
     case VARCHAR:
@@ -150,11 +194,11 @@ public abstract class RelDataTypeSystemImpl implements RelDataTypeSystem {
     }
   }
 
-  public boolean isAutoincrement(SqlTypeName typeName) {
+  @Override public boolean isAutoincrement(SqlTypeName typeName) {
     return false;
   }
 
-  public int getNumTypeRadix(SqlTypeName typeName) {
+  @Override public int getNumTypeRadix(SqlTypeName typeName) {
     if (typeName.getFamily() == SqlTypeFamily.NUMERIC
       && getDefaultPrecision(typeName) != -1) {
       return 10;
@@ -162,10 +206,15 @@ public abstract class RelDataTypeSystemImpl implements RelDataTypeSystem {
     return 0;
   }
 
-  public RelDataType deriveSumType(
+  @Override public RelDataType deriveSumType(
       RelDataTypeFactory typeFactory, RelDataType argumentType) {
     return argumentType;
   }
+
+  public boolean isSchemaCaseSensitive() {
+    return true;
+  }
+
 }
 
 // End RelDataTypeSystemImpl.java

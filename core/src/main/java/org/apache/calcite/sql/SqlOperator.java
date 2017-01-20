@@ -752,6 +752,23 @@ public abstract class SqlOperator {
     return false;
   }
 
+  /** Returns whether this is a window function that requires an OVER clause.
+   *
+   * <p>For example, returns true for {@code RANK}, {@code DENSE_RANK} and
+   * other ranking functions; returns false for {@code SUM}, {@code COUNT},
+   * {@code MIN}, {@code MAX}, {@code AVG} (they can be used as non-window
+   * aggregate functions).
+   *
+   * <p>If {@code requiresOver} returns true, then {@link #isAggregator()} must
+   * also return true.
+   *
+   * @see #allowsFraming()
+   * @see #requiresOrder()
+   */
+  public boolean requiresOver() {
+    return false;
+  }
+
   /**
    * Returns whether this is a window function that requires ordering.
    *
@@ -883,7 +900,7 @@ public abstract class SqlOperator {
    * be scalar (as opposed to a query).
    *
    * <p>If true (the default), the validator will attempt to convert the
-   * argument into a scalar subquery, which must have one column and return at
+   * argument into a scalar sub-query, which must have one column and return at
    * most one row.
    *
    * <p>Operators such as <code>SELECT</code> and <code>EXISTS</code> override

@@ -52,6 +52,7 @@ explain:
       EXPLAIN PLAN
       [ WITH TYPE | WITH IMPLEMENTATION | WITHOUT IMPLEMENTATION ]
       [ EXCLUDING ATTRIBUTES | INCLUDING [ ALL ] ATTRIBUTES ]
+      [ AS JSON | AS XML ]
       FOR ( query | insert | update | merge | delete )
 
 describe:
@@ -91,9 +92,10 @@ query:
   |   {
           select
       |   selectWithoutFrom
-      |   query UNION [ ALL ] query
-      |   query EXCEPT query
-      |   query INTERSECT query
+      |   query UNION [ ALL | DISTINCT ] query
+      |   query EXCEPT [ ALL | DISTINCT ] query
+      |   query MINUS [ ALL | DISTINCT ] query
+      |   query INTERSECT [ ALL | DISTINCT ] query
       }
       [ ORDER BY orderItem [, orderItem ]* ]
       [ LIMIT { count | ALL } ]
@@ -127,7 +129,9 @@ projectItem:
 
 tableExpression:
       tableReference [, tableReference ]*
-  |   tableExpression [ NATURAL ] [ LEFT | RIGHT | FULL ] JOIN tableExpression [ joinCondition ]
+  |   tableExpression [ NATURAL ] [ ( LEFT | RIGHT | FULL ) [ OUTER ] ] JOIN tableExpression [ joinCondition ]
+  |   tableExpression CROSS JOIN tableExpression
+  |   tableExpression [ CROSS | OUTER ] APPLY tableExpression
 
 joinCondition:
       ON booleanExpression
@@ -138,10 +142,11 @@ tableReference:
       [ [ AS ] alias [ '(' columnAlias [, columnAlias ]* ')' ] ]
 
 tablePrimary:
-      [ TABLE ] [ [ catalogName . ] schemaName . ] tableName
+      [ [ catalogName . ] schemaName . ] tableName
+      '(' TABLE [ [ catalogName . ] schemaName . ] tableName ')'
   |   [ LATERAL ] '(' query ')'
   |   UNNEST '(' expression ')' [ WITH ORDINALITY ]
-  |   TABLE '(' [ SPECIFIC ] functionName '(' expression [, expression ]* ')' ')'
+  |   [ LATERAL ] TABLE '(' [ SPECIFIC ] functionName '(' expression [, expression ]* ')' ')'
 
 values:
       VALUES expression [, expression ]*
@@ -201,6 +206,13 @@ may refer to tables in the FROM clause of an enclosing query.
 but is not standard SQL and is only allowed in certain
 [conformance levels]({{ site.apiRoot }}/org/apache/calcite/sql/validate/SqlConformance.html#isFromRequired--).
 
+MINUS is equivalent to EXCEPT,
+but is not standard SQL and is only allowed in certain
+[conformance levels]({{ site.apiRoot }}/org/apache/calcite/sql/validate/SqlConformance.html#isMinusAllowed--).
+
+CROSS APPLY and OUTER APPLY are only allowed in certain
+[conformance levels]({{ site.apiRoot }}/org/apache/calcite/sql/validate/SqlConformance.html#isApplyAllowed--).
+
 ## Keywords
 
 The following is a list of SQL keywords.
@@ -222,6 +234,7 @@ AFTER,
 ALWAYS,
 **AND**,
 **ANY**,
+APPLY,
 **ARE**,
 **ARRAY**,
 **AS**,
@@ -264,7 +277,7 @@ CENTURY,
 CHAIN,
 **CHAR**,
 **CHARACTER**,
-CHARACTERISTICTS,
+CHARACTERISTICS,
 CHARACTERS,
 **CHARACTER_LENGTH**,
 CHARACTER_SET_CATALOG,
@@ -449,6 +462,7 @@ INVOKER,
 ISOLATION,
 JAVA,
 **JOIN**,
+JSON,
 K,
 KEY,
 KEY_MEMBER,
@@ -487,6 +501,7 @@ MESSAGE_TEXT,
 MICROSECOND,
 MILLENNIUM,
 **MIN**,
+**MINUS**,
 **MINUTE**,
 MINVALUE,
 **MOD**,
@@ -591,6 +606,7 @@ READ,
 RELATIVE,
 **RELEASE**,
 REPEATABLE,
+REPLACE,
 **RESET**,
 RESTART,
 RESTRICT,
@@ -652,6 +668,43 @@ SPECIFIC_NAME,
 **SQLEXCEPTION**,
 **SQLSTATE**,
 **SQLWARNING**,
+SQL_BIGINT,
+SQL_BINARY,
+SQL_BIT,
+SQL_BLOB,
+SQL_BOOLEAN,
+SQL_CHAR,
+SQL_CLOB,
+SQL_DATE,
+SQL_DECIMAL,
+SQL_DOUBLE,
+SQL_FLOAT,
+SQL_INTEGER,
+SQL_INTERVAL_DAY,
+SQL_INTERVAL_DAY_TO_HOUR,
+SQL_INTERVAL_DAY_TO_MINUTE,
+SQL_INTERVAL_DAY_TO_SECOND,
+SQL_INTERVAL_HOUR,
+SQL_INTERVAL_HOUR_TO_MINUTE,
+SQL_INTERVAL_HOUR_TO_SECOND,
+SQL_INTERVAL_MINUTE,
+SQL_INTERVAL_MINUTE_TO_SECOND,
+SQL_INTERVAL_MONTH,
+SQL_INTERVAL_SECOND,
+SQL_INTERVAL_YEAR,
+SQL_INTERVAL_YEAR_TO_MONTH,
+SQL_LONGVARBINARY,
+SQL_LONGVARCHAR,
+SQL_LONGVARNCHAR,
+SQL_NCHAR,
+SQL_NCLOB,
+SQL_NUMERIC,
+SQL_NVARCHAR,
+SQL_REAL,
+SQL_SMALLINT,
+SQL_TIME,
+SQL_TIMESTAMP,
+SQL_TINYINT,
 SQL_TSI_DAY,
 SQL_TSI_FRAC_SECOND,
 SQL_TSI_HOUR,
@@ -662,6 +715,8 @@ SQL_TSI_QUARTER,
 SQL_TSI_SECOND,
 SQL_TSI_WEEK,
 SQL_TSI_YEAR,
+SQL_VARBINARY,
+SQL_VARCHAR,
 **SQRT**,
 **START**,
 STATE,
@@ -830,12 +885,31 @@ Note:
 
 ## Operators and functions
 
+### Operator precedence
+
+The operator precedence and associativity, highest to lowest.
+
+| Operator                                          | Associativity
+|:------------------------------------------------- |:-------------
+| .                                                 | left
+| [ ] (array element)                               | left
+| + - (unary plus, minus)                           | right
+| * /                                               | left
+| + -                                               | left
+| BETWEEN, IN, LIKE, SIMILAR                        | -
+| < > = <= >= <> !=                                 | left
+| IS NULL, IS FALSE, IS NOT TRUE etc.               | -
+| NOT                                               | right
+| AND                                               | left
+| OR                                                | left
+
 ### Comparison operators
 
 | Operator syntax                                   | Description
 |:------------------------------------------------- |:-----------
 | value1 = value2                                   | Equals
 | value1 <> value2                                  | Not equal
+| value1 != value2                                  | Not equal (only available at some conformance levels)
 | value1 > value2                                   | Greater than
 | value1 >= value2                                  | Greater than or equal
 | value1 < value2                                   | Less than
@@ -887,23 +961,40 @@ Note:
 | LN(numeric)               | Returns the natural logarithm (base *e*) of *numeric*
 | LOG10(numeric)            | Returns the base 10 logarithm of *numeric*
 | EXP(numeric)              | Returns *e* raised to the power of *numeric*
-| CEIL(numeric)             | Rounds *numeric* up, and returns the smallest number that is greater than or equal to *numeric*
-| FLOOR(numeric)            | Rounds *numeric* down, and returns the largest number that is less than or equal to *numeric*
+| CEIL(numeric)             | Rounds *numeric* up, returning the smallest integer that is greater than or equal to *numeric*
+| FLOOR(numeric)            | Rounds *numeric* down, returning the largest integer that is less than or equal to *numeric*
+| RAND([seed])              | Generates a random double between 0 and 1 inclusive, optionally initializing the random number generator with *seed*
+| RAND_INTEGER([seed, ] numeric) | Generates a random integer between 0 and *numeric* - 1 inclusive, optionally initializing the random number generator with *seed*
+| ACOS(numeric)             | Returns the arc cosine of *numeric*
+| ASIN(numeric)             | Returns the arc sine of *numeric*
+| ATAN(numeric)             | Returns the arc tangent of *numeric*
+| ATAN2(numeric, numeric)   | Returns the arc tangent of the *numeric* coordinates
+| COS(numeric)              | Returns the cosine of *numeric*
+| COT(numeric)              | Returns the cotangent of *numeric*
+| DEGREES(numeric)          | Converts *numeric* from radians to degrees
+| PI()                      | Returns a value that is closer than any other value to *pi*
+| RADIANS(numeric)          | Converts *numeric* from degrees to radians
+| ROUND(numeric1, numeric2) | Rounds *numeric1* to *numeric2* places right to the decimal point
+| SIGN(numeric)             | Returns the signum of *numeric*
+| SIN(numeric)              | Returns the sine of *numeric*
+| TAN(numeric)              | Returns the tangent of *numeric*
+| TRUNCATE(numeric1, numeric2) | Truncates *numeric1* to *numeric2* places right to the decimal point
 
 ### Character string operators and functions
 
 | Operator syntax            | Description
 |:-------------------------- |:-----------
-| string &#124;&#124; string | Concatenates two character strings.
+| string &#124;&#124; string | Concatenates two character strings
 | CHAR_LENGTH(string)        | Returns the number of characters in a character string
 | CHARACTER_LENGTH(string)   | As CHAR_LENGTH(*string*)
 | UPPER(string)              | Returns a character string converted to upper case
 | LOWER(string)              | Returns a character string converted to lower case
 | POSITION(string1 IN string2) | Returns the position of the first occurrence of *string1* in *string2*
+| POSITION(string1 IN string2 FROM integer) | Returns the position of the first occurrence of *string1* in *string2* starting at a given point (not standard SQL)
 | TRIM( { BOTH &#124; LEADING &#124; TRAILING } string1 FROM string2) | Removes the longest string containing only the characters in *string1* from the start/end/both ends of *string1*
 | OVERLAY(string1 PLACING string2 FROM integer [ FOR integer2 ]) | Replaces a substring of *string1* with *string2*
-| SUBSTRING(string FROM integer)  | Returns a substring of a character string starting at a given point.
-| SUBSTRING(string FROM integer FOR integer) | Returns a substring of a character string starting at a given point with a given length.
+| SUBSTRING(string FROM integer)  | Returns a substring of a character string starting at a given point
+| SUBSTRING(string FROM integer FOR integer) | Returns a substring of a character string starting at a given point with a given length
 | INITCAP(string)            | Returns *string* with the first letter of each word converter to upper case and the rest to lower case. Words are sequences of alphanumeric characters separated by non-alphanumeric characters.
 
 Not implemented:
@@ -914,8 +1005,9 @@ Not implemented:
 
 | Operator syntax | Description
 |:--------------- |:-----------
-| binary &#124;&#124; binary | Concatenates two binary strings.
+| binary &#124;&#124; binary | Concatenates two binary strings
 | POSITION(binary1 IN binary2) | Returns the position of the first occurrence of *binary1* in *binary2*
+| POSITION(binary1 IN binary2 FROM integer) | Returns the position of the first occurrence of *binary1* in *binary2* starting at a given point (not standard SQL)
 | OVERLAY(binary1 PLACING binary2 FROM integer [ FOR integer2 ]) | Replaces a substring of *binary1* with *binary2*
 | SUBSTRING(binary FROM integer) | Returns a substring of *binary* starting at a given point
 | SUBSTRING(binary FROM integer FOR integer) | Returns a substring of *binary* starting at a given point with a given length
@@ -1000,42 +1092,38 @@ See also: UNNEST relational operator converts a collection to a relation.
 
 #### Numeric
 
-| Operator syntax                | Description
-|:------------------------------ |:-----------
-| {fn ABS(numeric)}              | Returns the absolute value of *numeric*
-| {fn EXP(numeric)}              | Returns *e* raised to the power of *numeric*
-| {fn LOG(numeric)}              | Returns the natural logarithm (base *e*) of *numeric*
-| {fn LOG10(numeric)}            | Returns the base-10 logarithm of *numeric*
-| {fn MOD(numeric1, numeric2)}   | Returns the remainder (modulus) of *numeric1* divided by *numeric2*. The result is negative only if *numeric1* is negative
-| {fn POWER(numeric1, numeric2)} | Returns *numeric1* raised to the power of *numeric2*
-
-Not implemented:
-
-* {fn ACOS(numeric)} - Returns the arc cosine of *numeric*
-* {fn ASIN(numeric)} - Returns the arc sine of *numeric*
-* {fn ATAN(numeric)} - Returns the arc tangent of *numeric*
-* {fn ATAN2(numeric, numeric)}
-* {fn CEILING(numeric)} - Rounds *numeric* up, and returns the smallest number that is greater than or equal to *numeric*
-* {fn COS(numeric)} - Returns the cosine of *numeric*
-* {fn COT(numeric)}
-* {fn DEGREES(numeric)} - Converts *numeric* from radians to degrees
-* {fn FLOOR(numeric)} - Rounds *numeric* down, and returns the largest number that is less than or equal to *numeric*
-* {fn PI()} - Returns a value that is closer than any other value to *pi*
-* {fn RADIANS(numeric)} - Converts *numeric* from degrees to radians
-* {fn RAND(numeric)}
-* {fn ROUND(numeric, numeric)}
-* {fn SIGN(numeric)}
-* {fn SIN(numeric)} - Returns the sine of *numeric*
-* {fn SQRT(numeric)} - Returns the square root of *numeric*
-* {fn TAN(numeric)} - Returns the tangent of *numeric*
-* {fn TRUNCATE(numeric, numeric)}
+| Operator syntax                   | Description
+|:--------------------------------- |:-----------
+| {fn ABS(numeric)}                 | Returns the absolute value of *numeric*
+| {fn ACOS(numeric)}                | Returns the arc cosine of *numeric*
+| {fn ASIN(numeric)}                | Returns the arc sine of *numeric*
+| {fn ATAN(numeric)}                | Returns the arc tangent of *numeric*
+| {fn ATAN2(numeric, numeric)}      | Returns the arc tangent of the *numeric* coordinates
+| {fn CEILING(numeric)}             | Rounds *numeric* up, and returns the smallest number that is greater than or equal to *numeric*
+| {fn COS(numeric)}                 | Returns the cosine of *numeric*
+| {fn COT(numeric)}                 | Returns the cotangent of *numeric*
+| {fn DEGREES(numeric)}             | Converts *numeric* from radians to degrees
+| {fn EXP(numeric)}                 | Returns *e* raised to the power of *numeric*
+| {fn FLOOR(numeric)}               | Rounds *numeric* down, and returns the largest number that is less than or equal to *numeric*
+| {fn LOG(numeric)}                 | Returns the natural logarithm (base *e*) of *numeric*
+| {fn LOG10(numeric)}               | Returns the base-10 logarithm of *numeric*
+| {fn MOD(numeric1, numeric2)}      | Returns the remainder (modulus) of *numeric1* divided by *numeric2*. The result is negative only if *numeric1* is negative
+| {fn PI()}                         | Returns a value that is closer than any other value to *pi*
+| {fn POWER(numeric1, numeric2)}    | Returns *numeric1* raised to the power of *numeric2*
+| {fn RADIANS(numeric)}             | Converts *numeric* from degrees to radians
+| {fn RAND(numeric)}                | Returns a random double using *numeric* as the seed value
+| {fn ROUND(numeric1, numeric2)}    | Rounds *numeric1* to *numeric2* places right to the decimal point
+| {fn SIGN(numeric)}                | Returns the signum of *numeric*
+| {fn SIN(numeric)}                 | Returns the sine of *numeric*
+| {fn SQRT(numeric)}                | Returns the square root of *numeric*
+| {fn TAN(numeric)}                 | Returns the tangent of *numeric*
+| {fn TRUNCATE(numeric1, numeric2)} | Truncates *numeric1* to *numeric2* places right to the decimal point
 
 #### String
 
 | Operator syntax | Description
 |:--------------- |:-----------
 | {fn CONCAT(character, character)} | Returns the concatenation of character strings
-| {fn LOCATE(string1, string2)} | Returns the position in *string2* of the first occurrence of *string1*. Searches from the beginning of the second CharacterExpression, unless the startIndex parameter is specified.
 | {fn INSERT(string1, start, length, string2)} | Inserts *string2* into a slot in *string1*
 | {fn LCASE(string)}            | Returns a string in which all alphabetic characters in *string* have been converted to lower case
 | {fn LENGTH(string)} | Returns the number of characters in a string
@@ -1044,6 +1132,7 @@ Not implemented:
 | {fn RTRIM(string)} | Returns *string* with trailing space characters removed
 | {fn SUBSTRING(string, offset, length)} | Returns a character string that consists of *length* characters from *string* starting at the *offset* position
 | {fn UCASE(string)} | Returns a string in which all alphabetic characters in *string* have been converted to upper case
+| {fn REPLACE(string, search, replacement)} | Returns a string in which all the occurrences of *search* in *string* are replaced with *replacement*; if *replacement* is the empty string, the occurrences of *search* are removed
 
 Not implemented:
 
@@ -1052,7 +1141,6 @@ Not implemented:
 * {fn DIFFERENCE(string, string)}
 * {fn LEFT(string, integer)}
 * {fn REPEAT(string, integer)}
-* {fn REPLACE(string, string, string)}
 * {fn RIGHT(string, integer)}
 * {fn SOUNDEX(string)}
 * {fn SPACE(integer)}
@@ -1089,7 +1177,12 @@ Not implemented:
 * {fn DATABASE()}
 * {fn IFNULL(value, value)}
 * {fn USER(value, value)}
-* {fn CONVERT(value, type)}
+
+#### Conversion
+
+| Operator syntax | Description
+|:--------------- |:-----------
+| {fn CONVERT(value, type)} | Cast *value* into *type*
 
 ### Aggregate functions
 

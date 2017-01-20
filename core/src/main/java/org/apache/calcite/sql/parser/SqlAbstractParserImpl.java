@@ -26,6 +26,8 @@ import org.apache.calcite.sql.SqlOperator;
 import org.apache.calcite.sql.SqlSyntax;
 import org.apache.calcite.sql.SqlUnresolvedFunction;
 import org.apache.calcite.sql.fun.SqlStdOperatorTable;
+import org.apache.calcite.sql.validate.SqlConformance;
+import org.apache.calcite.util.Glossary;
 import org.apache.calcite.util.Util;
 
 import com.google.common.collect.ImmutableList;
@@ -303,19 +305,25 @@ public abstract class SqlAbstractParserImpl {
     /**
      * Accept only non-query expressions in this context.
      */
-    ACCEPT_NONQUERY,
+    ACCEPT_NON_QUERY,
 
     /**
      * Accept only parenthesized queries or non-query expressions in this
      * context.
      */
-    ACCEPT_SUBQUERY,
+    ACCEPT_SUB_QUERY,
 
     /**
      * Accept only CURSOR constructors, parenthesized queries, or non-query
      * expressions in this context.
      */
-    ACCEPT_CURSOR
+    ACCEPT_CURSOR;
+
+    @Deprecated // to be removed before 2.0
+    public static final ExprContext ACCEPT_SUBQUERY = ACCEPT_SUB_QUERY;
+
+    @Deprecated // to be removed before 2.0
+    public static final ExprContext ACCEPT_NONQUERY = ACCEPT_NON_QUERY;
   }
 
   //~ Instance fields --------------------------------------------------------
@@ -332,8 +340,9 @@ public abstract class SqlAbstractParserImpl {
   //~ Methods ----------------------------------------------------------------
 
   /**
-   * @return immutable set of all reserved words defined by SQL-92
-   * @sql.92 Section 5.2
+   * Returns immutable set of all reserved words defined by SQL-92.
+   *
+   * @see Glossary#SQL92 SQL-92 Section 5.2
    */
   public static Set<String> getSql92ReservedWords() {
     return SQL_92_RESERVED_WORD_SET;
@@ -363,7 +372,7 @@ public abstract class SqlAbstractParserImpl {
     /// name when regenerating SQL).
     if (funName.isSimple()) {
       final List<SqlOperator> list = Lists.newArrayList();
-      opTab.lookupOperatorOverloads(funName, null, SqlSyntax.FUNCTION, list);
+      opTab.lookupOperatorOverloads(funName, funcType, SqlSyntax.FUNCTION, list);
       if (list.size() == 1) {
         fun = list.get(0);
       }
@@ -442,6 +451,11 @@ public abstract class SqlAbstractParserImpl {
    * Sets the maximum length for sql identifier.
    */
   public abstract void setIdentifierMaxLength(int identifierMaxLength);
+
+  /**
+   * Sets the SQL language conformance level.
+   */
+  public abstract void setConformance(SqlConformance conformance);
 
   /**
    * Sets the SQL text that is being parsed.

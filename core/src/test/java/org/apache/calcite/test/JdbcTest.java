@@ -43,6 +43,7 @@ import org.apache.calcite.linq4j.QueryProvider;
 import org.apache.calcite.linq4j.Queryable;
 import org.apache.calcite.linq4j.function.Function0;
 import org.apache.calcite.plan.RelOptCluster;
+import org.apache.calcite.plan.RelOptPlanner;
 import org.apache.calcite.plan.RelOptTable;
 import org.apache.calcite.plan.RelOptUtil;
 import org.apache.calcite.prepare.CalcitePrepareImpl;
@@ -50,8 +51,10 @@ import org.apache.calcite.prepare.Prepare;
 import org.apache.calcite.rel.RelNode;
 import org.apache.calcite.rel.core.TableModify;
 import org.apache.calcite.rel.logical.LogicalTableModify;
+import org.apache.calcite.rel.rules.IntersectToDistinctRule;
 import org.apache.calcite.rel.type.RelDataType;
 import org.apache.calcite.rel.type.RelDataTypeFactory;
+import org.apache.calcite.rex.RexNode;
 import org.apache.calcite.runtime.FlatLists;
 import org.apache.calcite.runtime.Hook;
 import org.apache.calcite.runtime.SqlFunctions;
@@ -87,7 +90,6 @@ import org.apache.calcite.sql.parser.SqlParserImplFactory;
 import org.apache.calcite.sql.parser.SqlParserPos;
 import org.apache.calcite.sql.parser.SqlParserUtil;
 import org.apache.calcite.sql.parser.impl.SqlParserImpl;
-import org.apache.calcite.sql.type.SqlTypeName;
 import org.apache.calcite.util.Bug;
 import org.apache.calcite.util.JsonBuilder;
 import org.apache.calcite.util.Pair;
@@ -98,23 +100,20 @@ import org.apache.calcite.util.Util;
 import com.google.common.base.Function;
 import com.google.common.base.Throwables;
 import com.google.common.collect.ImmutableList;
-import com.google.common.collect.ImmutableMap;
-
-import net.hydromatic.quidem.Quidem;
+import com.google.common.collect.LinkedListMultimap;
+import com.google.common.collect.Multimap;
 
 import org.hsqldb.jdbcDriver;
 
 import org.junit.Ignore;
 import org.junit.Test;
 
-import java.io.BufferedReader;
 import java.io.File;
-import java.io.FileReader;
 import java.io.FileWriter;
 import java.io.IOException;
+import java.io.PrintWriter;
 import java.io.Reader;
 import java.math.BigDecimal;
-import java.net.URL;
 import java.sql.Array;
 import java.sql.Connection;
 import java.sql.DatabaseMetaData;
@@ -136,6 +135,7 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.NoSuchElementException;
+import java.util.Objects;
 import java.util.Properties;
 import java.util.Set;
 import java.util.TimeZone;
@@ -146,6 +146,7 @@ import static org.apache.calcite.util.Static.RESOURCE;
 
 import static org.hamcrest.CoreMatchers.containsString;
 import static org.hamcrest.CoreMatchers.equalTo;
+import static org.hamcrest.CoreMatchers.hasItem;
 import static org.hamcrest.CoreMatchers.instanceOf;
 import static org.hamcrest.CoreMatchers.is;
 import static org.hamcrest.CoreMatchers.not;
@@ -269,7 +270,7 @@ public class JdbcTest {
                 assertThat(resultSet.next(), is(true));
                 assertThat(Util.toLinux(resultSet.getString(1)),
                     is(
-                        "EnumerableTableModify(table=[[adhoc, MUTABLE_EMPLOYEES]], operation=[INSERT], updateColumnList=[[]], flattened=[false])\n"
+                        "EnumerableTableModify(table=[[adhoc, MUTABLE_EMPLOYEES]], operation=[INSERT], flattened=[false])\n"
                         + "  EnumerableCalc(expr#0..2=[{inputs}], expr#3=[CAST($t1):JavaType(int) NOT NULL], expr#4=[10], expr#5=[CAST($t0):JavaType(class java.lang.String)], expr#6=[CAST($t2):JavaType(float) NOT NULL], expr#7=[null], empid=[$t3], deptno=[$t4], name=[$t5], salary=[$t6], commission=[$t7])\n"
                         + "    EnumerableValues(tuples=[[{ 'Fred', 56, 123.4 }]])\n"));
 
@@ -359,7 +360,7 @@ public class JdbcTest {
           true)
           .query("insert into \"adhoc\".v values ('n',1,2)")
           .explainContains(""
-              + "EnumerableTableModify(table=[[adhoc, MUTABLE_EMPLOYEES]], operation=[INSERT], updateColumnList=[[]], flattened=[false])\n"
+              + "EnumerableTableModify(table=[[adhoc, MUTABLE_EMPLOYEES]], operation=[INSERT], flattened=[false])\n"
               + "  EnumerableCalc(expr#0..2=[{inputs}], expr#3=[CAST($t1):JavaType(int) NOT NULL], expr#4=[10], expr#5=[CAST($t0):JavaType(class java.lang.String)], expr#6=[CAST($t2):JavaType(float) NOT NULL], expr#7=[null], expr#8=[20], expr#9=[<($t4, $t8)], expr#10=[1000], expr#11=[>($t7, $t10)], expr#12=[OR($t9, $t11)], empid=[$t3], deptno=[$t4], name=[$t5], salary=[$t6], commission=[$t7], $condition=[$t12])\n"
               + "    EnumerableValues(tuples=[[{ 'n', 1, 2 }]])");
 
@@ -1035,7 +1036,7 @@ public class JdbcTest {
     final int driverMajor = metaData.getDriverMajorVersion();
     final int driverMinor = metaData.getDriverMinorVersion();
     assertEquals(1, driverMajor);
-    assertTrue(driverMinor >= 0 && driverMinor < 10);
+    assertTrue(driverMinor >= 0 && driverMinor < 20);
 
     assertEquals("Calcite", metaData.getDatabaseProductName());
     final String databaseVersion =
@@ -1948,6 +1949,7 @@ public class JdbcTest {
     //   12    36
     //   13   116 - OOM did not complete
     checkJoinNWay(1);
+    checkJoinNWay(3);
     checkJoinNWay(6);
   }
 
@@ -3459,6 +3461,66 @@ public class JdbcTest {
             "C=0");
   }
 
+  @Test public void testUnionAll() {
+    CalciteAssert.hr()
+        .query("select \"empid\", \"name\" from \"hr\".\"emps\" where \"deptno\"=10\n"
+            + "union all\n"
+            + "select \"empid\", \"name\" from \"hr\".\"emps\" where \"empid\">=150")
+        .explainContains(""
+            + "PLAN=EnumerableUnion(all=[true])")
+        .returnsUnordered("empid=100; name=Bill",
+            "empid=110; name=Theodore",
+            "empid=150; name=Sebastian",
+            "empid=150; name=Sebastian",
+            "empid=200; name=Eric");
+  }
+
+  @Test public void testUnion() {
+    final String sql = ""
+        + "select \"empid\", \"name\" from \"hr\".\"emps\" where \"deptno\"=10\n"
+        + "union\n"
+        + "select \"empid\", \"name\" from \"hr\".\"emps\" where \"empid\">=150";
+    CalciteAssert.hr()
+        .query(sql)
+        .explainContains(""
+            + "PLAN=EnumerableUnion(all=[false])")
+        .returnsUnordered("empid=100; name=Bill",
+            "empid=110; name=Theodore",
+            "empid=150; name=Sebastian",
+            "empid=200; name=Eric");
+  }
+
+  @Test public void testIntersect() {
+    final String sql = ""
+        + "select \"empid\", \"name\" from \"hr\".\"emps\" where \"deptno\"=10\n"
+        + "intersect\n"
+        + "select \"empid\", \"name\" from \"hr\".\"emps\" where \"empid\">=150";
+    CalciteAssert.hr()
+        .query(sql)
+        .withHook(Hook.PLANNER, new Function<RelOptPlanner, Void>() {
+          @Override public Void apply(RelOptPlanner planner) {
+            planner.removeRule(IntersectToDistinctRule.INSTANCE);
+            return null;
+          }
+        })
+        .explainContains(""
+            + "PLAN=EnumerableIntersect(all=[false])")
+        .returnsUnordered("empid=150; name=Sebastian");
+  }
+
+  @Test public void testExcept() {
+    final String sql = ""
+        + "select \"empid\", \"name\" from \"hr\".\"emps\" where \"deptno\"=10\n"
+        + "except\n"
+        + "select \"empid\", \"name\" from \"hr\".\"emps\" where \"empid\">=150";
+    CalciteAssert.hr()
+        .query(sql)
+        .explainContains(""
+            + "PLAN=EnumerableMinus(all=[false])")
+        .returnsUnordered("empid=100; name=Bill",
+            "empid=110; name=Theodore");
+  }
+
   /** Tests that SUM and AVG over empty set return null. COUNT returns 0. */
   @Test public void testAggregateEmpty() {
     CalciteAssert.hr()
@@ -3771,8 +3833,6 @@ public class JdbcTest {
   }
 
   /** Tests for DATE +- INTERVAL window frame */
-  @Ignore("DATE/TIMESTAMP/INTERVAL support is broken:"
-      + "1 year is converted to 12 months instead of milliseconds")
   @Test public void testWinIntervalFrame() {
     CalciteAssert.hr()
         .query("select  \"deptno\",\n"
@@ -3784,12 +3844,11 @@ public class JdbcTest {
             + "  DATE '2014-06-12' + \"empid\"*interval '0' day \"hire_date\"\n"
             + "  from \"hr\".\"emps\")")
         .typeIs(
-            "[deptno INTEGER NOT NULL, empid INTEGER NOT NULL, hire_date DATE NOT NULL, R BIGINT]")
-        .returnsUnordered(
-            "deptno=10; R=1",
-            "deptno=10; R=1",
-            "deptno=10; R=1",
-            "deptno=20; R=4"); // 4 for rank and 2 for dense_rank
+            "[deptno INTEGER NOT NULL, empid INTEGER NOT NULL, hire_date DATE NOT NULL, R BIGINT NOT NULL]")
+        .returnsUnordered("deptno=10; empid=100; hire_date=2014-06-12; R=3",
+            "deptno=10; empid=110; hire_date=2014-06-12; R=3",
+            "deptno=10; empid=150; hire_date=2014-06-12; R=3",
+            "deptno=20; empid=200; hire_date=2014-06-12; R=1");
   }
 
   private void startOfGroupStep1(String startOfGroup) {
@@ -4411,12 +4470,11 @@ public class JdbcTest {
             "U=b; V=c");
   }
 
-  /** Tests CALCITE-980: different flavors of boolean logic */
-  @Test public void testBooleansInWhere() throws Exception {
-    checkRun("sql/conditions.iq");
-  }
-
-  /** Tests CALCITE-980: different flavors of boolean logic */
+  /** Test case for
+   * <a href="https://issues.apache.org/jira/browse/CALCITE-980">[CALCITE-980]
+   * different flavors of boolean logic</a>.
+   *
+   * @see QuidemTest sql/conditions.iq */
   @Ignore("Fails with org.codehaus.commons.compiler.CompileException: Line 16, Column 112:"
       + " Cannot compare types \"int\" and \"java.lang.String\"\n")
   @Test public void testComparingIntAndString() throws Exception {
@@ -4621,7 +4679,7 @@ public class JdbcTest {
 
   @Test public void testNotExistsCorrelated() {
     final String plan = "PLAN="
-        + "EnumerableCalc(expr#0..5=[{inputs}], expr#6=[IS NOT NULL($t5)], expr#7=[true], expr#8=[false], expr#9=[CASE($t6, $t7, $t8)], expr#10=[NOT($t9)], proj#0..4=[{exprs}], $condition=[$t10])\n"
+        + "EnumerableCalc(expr#0..5=[{inputs}], expr#6=[IS NULL($t5)], proj#0..4=[{exprs}], $condition=[$t6])\n"
         + "  EnumerableCorrelate(correlation=[$cor0], joinType=[LEFT], requiredColumns=[{1}])\n"
         + "    EnumerableTableScan(table=[[hr, emps]])\n"
         + "    EnumerableAggregate(group=[{0}])\n"
@@ -4668,7 +4726,7 @@ public class JdbcTest {
   /** Test case for
    * <a href="https://issues.apache.org/jira/browse/CALCITE-313">[CALCITE-313]
    * Query decorrelation fails</a>. */
-  @Test public void testJoinInCorrelatedSubquery() {
+  @Test public void testJoinInCorrelatedSubQuery() {
     CalciteAssert.hr()
         .query("select *\n"
             + "from \"hr\".\"depts\" as d\n"
@@ -4707,8 +4765,8 @@ public class JdbcTest {
 
   /** Test case for
    * <a href="https://issues.apache.org/jira/browse/CALCITE-559">[CALCITE-559]
-   * Correlated scalar subquery in WHERE gives error</a>. */
-  @Test public void testJoinCorrelatedScalarSubquery() throws SQLException {
+   * Correlated scalar sub-query in WHERE gives error</a>. */
+  @Test public void testJoinCorrelatedScalarSubQuery() throws SQLException {
     final String sql = "select e.employee_id, d.department_id "
         + " from employee e, department d "
         + " where e.department_id = d.department_id "
@@ -4813,198 +4871,6 @@ public class JdbcTest {
             + "    (30, 'Engineering'),\n"
             + "    (40, 'Empty'))\n"
             + sql);
-  }
-
-  /** Runs the dummy script, which is checked in empty but which you may
-   * use as scratch space during development. */
-  // Do not add '@Ignore'; just remember not to commit changes to dummy.iq
-  @Test public void testRunDummy() throws Exception {
-    try (final TryThreadLocal.Memo ignored = Prepare.THREAD_EXPAND.push(true)) {
-      checkRun("sql/dummy.iq");
-    }
-  }
-
-  @Test public void testRunAgg() throws Exception {
-    checkRun("sql/agg.iq");
-  }
-
-  @Test public void testRunJoin() throws Exception {
-    checkRun("sql/join.iq");
-  }
-
-  @Test public void testRunOuter() throws Exception {
-    checkRun("sql/outer.iq");
-  }
-
-  @Test public void testRunWinAgg() throws Exception {
-    checkRun("sql/winagg.iq");
-  }
-
-  @Test public void testRunMisc() throws Exception {
-    switch (CalciteAssert.DB) {
-    case ORACLE:
-      // There are formatting differences (e.g. "4.000" vs "4") when using
-      // Oracle as the JDBC data source.
-      return;
-    }
-    try (final TryThreadLocal.Memo ignored = Prepare.THREAD_EXPAND.push(true)) {
-      checkRun("sql/misc.iq");
-    }
-  }
-
-  @Test public void testRunSequence() throws Exception {
-    checkRun("sql/sequence.iq");
-  }
-
-  @Test public void testRunSort() throws Exception {
-    checkRun("sql/sort.iq");
-  }
-
-  @Test public void testRunScalar() throws Exception {
-    try (final TryThreadLocal.Memo ignored = Prepare.THREAD_EXPAND.push(true)) {
-      checkRun("sql/scalar.iq");
-    }
-  }
-
-  @Test public void testRunSubquery() throws Exception {
-    checkRun("sql/subquery.iq");
-  }
-
-  private void checkRun(String path) throws Exception {
-    final File inFile;
-    final File outFile;
-    if (path.startsWith("/")) {
-      // e.g. path = "/tmp/foo.iq"
-      inFile = new File(path);
-      outFile = new File(path + ".out");
-    } else {
-      // e.g. path = "sql/outer.iq"
-      // inUrl = "file:/home/fred/calcite/core/target/test-classes/sql/outer.iq"
-      final URL inUrl = JdbcTest.class.getResource("/" + path);
-      String x = inUrl.getFile();
-      assert x.endsWith(path);
-      x = x.substring(0, x.length() - path.length());
-      assert x.endsWith("/test-classes/");
-      x = x.substring(0, x.length() - "/test-classes/".length());
-      final File base = new File(x);
-      inFile = new File(base, "/test-classes/" + path);
-      outFile = new File(base, "/surefire/" + path);
-    }
-    outFile.getParentFile().mkdirs();
-    final FileReader fileReader = new FileReader(inFile);
-    final BufferedReader bufferedReader = new BufferedReader(fileReader);
-    final FileWriter writer = new FileWriter(outFile);
-    final Function<String, Object> env =
-        new Function<String, Object>() {
-          public Object apply(String varName) {
-            switch (varName) {
-            case "jdk18":
-              return System.getProperty("java.version").startsWith("1.8");
-            case "fixed":
-              return new Function<String, Object>() {
-                public Object apply(String v) {
-                  switch (v) {
-                  case "calcite1045":
-                    return Bug.CALCITE_1045_FIXED;
-                  case "calcite1048":
-                    return Bug.CALCITE_1048_FIXED;
-                  }
-                  return null;
-                }
-              };
-            default:
-              return null;
-            }
-          }
-        };
-    final Quidem.NewConnectionFactory connectionFactory =
-        new Quidem.NewConnectionFactory() {
-          public Connection connect(String name) throws Exception {
-            return connect(name, false);
-          }
-
-          public Connection connect(String name, boolean reference)
-              throws Exception {
-            if (reference) {
-              if (name.equals("foodmart")) {
-                final ConnectionSpec db =
-                    CalciteAssert.DatabaseInstance.HSQLDB.foodmart;
-                final Connection connection = DriverManager.getConnection(db.url,
-                    db.username,
-                    db.password);
-                connection.setSchema("foodmart");
-                return connection;
-              }
-              return null;
-            }
-            if (name.equals("hr")) {
-              return CalciteAssert.hr()
-                  .connect();
-            }
-            if (name.equals("foodmart")) {
-              return CalciteAssert.that()
-                  .with(CalciteAssert.Config.FOODMART_CLONE)
-                  .connect();
-            }
-            if (name.equals("scott")) {
-              return CalciteAssert.that()
-                  .with(CalciteAssert.Config.SCOTT)
-                  .connect();
-            }
-            if (name.equals("jdbc_scott")) {
-              return CalciteAssert.that()
-                  .with(CalciteAssert.Config.JDBC_SCOTT)
-                  .connect();
-            }
-            if (name.equals("post")) {
-              return CalciteAssert.that()
-                  .with(CalciteAssert.Config.REGULAR)
-                  .with(CalciteAssert.SchemaSpec.POST)
-                  .withDefaultSchema("POST")
-                  .connect();
-            }
-            if (name.equals("catchall")) {
-              return CalciteAssert.that()
-                  .withSchema("s",
-                      new ReflectiveSchema(
-                          new ReflectiveSchemaTest.CatchallSchema()))
-                  .connect();
-            }
-            if (name.equals("orinoco")) {
-              return CalciteAssert.that()
-                  .with(CalciteAssert.SchemaSpec.ORINOCO)
-                  .withDefaultSchema("ORINOCO")
-                  .connect();
-            }
-            if (name.equals("seq")) {
-              final Connection connection = CalciteAssert.that()
-                  .withSchema("s", new AbstractSchema())
-                  .connect();
-              connection.unwrap(CalciteConnection.class).getRootSchema()
-                  .getSubSchema("s")
-                  .add("my_seq",
-                      new AbstractTable() {
-                        public RelDataType getRowType(
-                            RelDataTypeFactory typeFactory) {
-                          return typeFactory.builder()
-                              .add("$seq", SqlTypeName.BIGINT).build();
-                        }
-
-                        @Override public Schema.TableType getJdbcTableType() {
-                          return Schema.TableType.SEQUENCE;
-                        }
-                      });
-              return connection;
-            }
-            throw new RuntimeException("unknown connection '" + name + "'");
-          }
-        };
-    new Quidem(bufferedReader, writer, env, connectionFactory).execute();
-    final String diff = DiffTestCase.diff(inFile, outFile);
-    if (!diff.isEmpty()) {
-      fail("Files differ: " + outFile + " " + inFile + "\n"
-          + diff);
-    }
   }
 
   @Test public void testScalarSubQueryUncorrelated() {
@@ -5144,7 +5010,23 @@ public class JdbcTest {
                       "deptno=10; name=Theodore\n",
                       CalciteAssert.toString(resultSet));
 
+                  // Now BETWEEN, with 3 arguments, 2 of which are parameters
+                  final String sql2 = "select \"deptno\", \"name\" "
+                      + "from \"hr\".\"emps\"\n"
+                      + "where \"deptno\" between symmetric ? and ?\n"
+                      + "order by 2";
+                  final PreparedStatement preparedStatement2 =
+                      connection.prepareStatement(sql2);
+                  preparedStatement2.setInt(1, 15);
+                  preparedStatement2.setInt(2, 5);
+                  resultSet = preparedStatement2.executeQuery();
+                  assertThat(CalciteAssert.toString(resultSet),
+                      is("deptno=10; name=Bill\n"
+                          + "deptno=10; name=Sebastian\n"
+                          + "deptno=10; name=Theodore\n"));
+
                   resultSet.close();
+                  preparedStatement2.close();
                   preparedStatement.close();
                   return null;
                 } catch (SQLException e) {
@@ -5310,7 +5192,59 @@ public class JdbcTest {
             + "empid=150; deptno=10; name=Sebastian; salary=7000.0; commission=null\n"
             + "empid=110; deptno=10; name=Theodore; salary=11500.0; commission=250\n");
     that.query("select * from \"adhoc\".EMPLOYEES")
-        .throws_("Table 'adhoc.EMPLOYEES' not found");
+        .throws_("Object 'EMPLOYEES' not found within 'adhoc'");
+  }
+
+  /** Test case for
+   * <a href="https://issues.apache.org/jira/browse/CALCITE-1360">[CALCITE-1360]
+   * Custom schema in file in current directory</a>. */
+  @Test public void testCustomSchemaInFileInPwd() throws SQLException {
+    checkCustomSchemaInFileInPwd("custom-schema-model.json");
+    switch (File.pathSeparatorChar) {
+    case '/':
+      // Skip this test on Windows; the mapping from file names to URLs is too
+      // weird.
+      checkCustomSchemaInFileInPwd("." + File.pathSeparatorChar
+          + "custom-schema-model2.json");
+    }
+  }
+
+  private void checkCustomSchemaInFileInPwd(String fileName)
+      throws SQLException {
+    final File file = new File(fileName);
+    try (final FileWriter fw = new FileWriter(file);
+         final PrintWriter pw = new PrintWriter(fw)) {
+      file.deleteOnExit();
+      pw.println("{\n"
+          + "  version: '1.0',\n"
+          + "  defaultSchema: 'adhoc',\n"
+          + "  schemas: [\n"
+          + "    {\n"
+          + "      name: 'empty'\n"
+          + "    },\n"
+          + "    {\n"
+          + "      name: 'adhoc',\n"
+          + "      type: 'custom',\n"
+          + "      factory: '"
+          + MySchemaFactory.class.getName()
+          + "',\n"
+          + "      operand: {'tableName': 'ELVIS'}\n"
+          + "    }\n"
+          + "  ]\n"
+          + "}");
+      pw.flush();
+      final String url = "jdbc:calcite:model=" + file;
+      try (Connection c = DriverManager.getConnection(url);
+           Statement s = c.createStatement();
+           ResultSet r = s.executeQuery("values 1")) {
+        assertThat(r.next(), is(true));
+      }
+      //noinspection ResultOfMethodCallIgnored
+      file.delete();
+    } catch (IOException e) {
+      // current directory is not writable; an environment issue, not
+      // necessarily a bug
+    }
   }
 
   /** Connects to a custom schema without writing a model.
@@ -5504,11 +5438,11 @@ public class JdbcTest {
 
               // columns
               assertEquals(
-                  "TABLE_CAT=null; TABLE_SCHEM=adhoc; TABLE_NAME=V; COLUMN_NAME=empid; DATA_TYPE=4; TYPE_NAME=JavaType(int) NOT NULL; COLUMN_SIZE=-1; BUFFER_LENGTH=null; DECIMAL_DIGITS=null; NUM_PREC_RADIX=10; NULLABLE=0; REMARKS=null; COLUMN_DEF=null; SQL_DATA_TYPE=null; SQL_DATETIME_SUB=null; CHAR_OCTET_LENGTH=-1; ORDINAL_POSITION=1; IS_NULLABLE=NO; SCOPE_CATALOG=null; SCOPE_SCHEMA=null; SCOPE_TABLE=null; SOURCE_DATA_TYPE=null; IS_AUTOINCREMENT=null; IS_GENERATEDCOLUMN=null\n"
-                      + "TABLE_CAT=null; TABLE_SCHEM=adhoc; TABLE_NAME=V; COLUMN_NAME=deptno; DATA_TYPE=4; TYPE_NAME=JavaType(int) NOT NULL; COLUMN_SIZE=-1; BUFFER_LENGTH=null; DECIMAL_DIGITS=null; NUM_PREC_RADIX=10; NULLABLE=0; REMARKS=null; COLUMN_DEF=null; SQL_DATA_TYPE=null; SQL_DATETIME_SUB=null; CHAR_OCTET_LENGTH=-1; ORDINAL_POSITION=2; IS_NULLABLE=NO; SCOPE_CATALOG=null; SCOPE_SCHEMA=null; SCOPE_TABLE=null; SOURCE_DATA_TYPE=null; IS_AUTOINCREMENT=null; IS_GENERATEDCOLUMN=null\n"
-                      + "TABLE_CAT=null; TABLE_SCHEM=adhoc; TABLE_NAME=V; COLUMN_NAME=name; DATA_TYPE=12; TYPE_NAME=JavaType(class java.lang.String); COLUMN_SIZE=-1; BUFFER_LENGTH=null; DECIMAL_DIGITS=null; NUM_PREC_RADIX=10; NULLABLE=1; REMARKS=null; COLUMN_DEF=null; SQL_DATA_TYPE=null; SQL_DATETIME_SUB=null; CHAR_OCTET_LENGTH=-1; ORDINAL_POSITION=3; IS_NULLABLE=YES; SCOPE_CATALOG=null; SCOPE_SCHEMA=null; SCOPE_TABLE=null; SOURCE_DATA_TYPE=null; IS_AUTOINCREMENT=null; IS_GENERATEDCOLUMN=null\n"
-                      + "TABLE_CAT=null; TABLE_SCHEM=adhoc; TABLE_NAME=V; COLUMN_NAME=salary; DATA_TYPE=7; TYPE_NAME=JavaType(float) NOT NULL; COLUMN_SIZE=-1; BUFFER_LENGTH=null; DECIMAL_DIGITS=null; NUM_PREC_RADIX=10; NULLABLE=0; REMARKS=null; COLUMN_DEF=null; SQL_DATA_TYPE=null; SQL_DATETIME_SUB=null; CHAR_OCTET_LENGTH=-1; ORDINAL_POSITION=4; IS_NULLABLE=NO; SCOPE_CATALOG=null; SCOPE_SCHEMA=null; SCOPE_TABLE=null; SOURCE_DATA_TYPE=null; IS_AUTOINCREMENT=null; IS_GENERATEDCOLUMN=null\n"
-                      + "TABLE_CAT=null; TABLE_SCHEM=adhoc; TABLE_NAME=V; COLUMN_NAME=commission; DATA_TYPE=4; TYPE_NAME=JavaType(class java.lang.Integer); COLUMN_SIZE=-1; BUFFER_LENGTH=null; DECIMAL_DIGITS=null; NUM_PREC_RADIX=10; NULLABLE=1; REMARKS=null; COLUMN_DEF=null; SQL_DATA_TYPE=null; SQL_DATETIME_SUB=null; CHAR_OCTET_LENGTH=-1; ORDINAL_POSITION=5; IS_NULLABLE=YES; SCOPE_CATALOG=null; SCOPE_SCHEMA=null; SCOPE_TABLE=null; SOURCE_DATA_TYPE=null; IS_AUTOINCREMENT=null; IS_GENERATEDCOLUMN=null\n",
+                  "TABLE_CAT=null; TABLE_SCHEM=adhoc; TABLE_NAME=V; COLUMN_NAME=empid; DATA_TYPE=4; TYPE_NAME=JavaType(int) NOT NULL; COLUMN_SIZE=-1; BUFFER_LENGTH=null; DECIMAL_DIGITS=null; NUM_PREC_RADIX=10; NULLABLE=0; REMARKS=null; COLUMN_DEF=null; SQL_DATA_TYPE=null; SQL_DATETIME_SUB=null; CHAR_OCTET_LENGTH=-1; ORDINAL_POSITION=1; IS_NULLABLE=NO; SCOPE_CATALOG=null; SCOPE_SCHEMA=null; SCOPE_TABLE=null; SOURCE_DATA_TYPE=null; IS_AUTOINCREMENT=; IS_GENERATEDCOLUMN=\n"
+                      + "TABLE_CAT=null; TABLE_SCHEM=adhoc; TABLE_NAME=V; COLUMN_NAME=deptno; DATA_TYPE=4; TYPE_NAME=JavaType(int) NOT NULL; COLUMN_SIZE=-1; BUFFER_LENGTH=null; DECIMAL_DIGITS=null; NUM_PREC_RADIX=10; NULLABLE=0; REMARKS=null; COLUMN_DEF=null; SQL_DATA_TYPE=null; SQL_DATETIME_SUB=null; CHAR_OCTET_LENGTH=-1; ORDINAL_POSITION=2; IS_NULLABLE=NO; SCOPE_CATALOG=null; SCOPE_SCHEMA=null; SCOPE_TABLE=null; SOURCE_DATA_TYPE=null; IS_AUTOINCREMENT=; IS_GENERATEDCOLUMN=\n"
+                      + "TABLE_CAT=null; TABLE_SCHEM=adhoc; TABLE_NAME=V; COLUMN_NAME=name; DATA_TYPE=12; TYPE_NAME=JavaType(class java.lang.String); COLUMN_SIZE=-1; BUFFER_LENGTH=null; DECIMAL_DIGITS=null; NUM_PREC_RADIX=10; NULLABLE=1; REMARKS=null; COLUMN_DEF=null; SQL_DATA_TYPE=null; SQL_DATETIME_SUB=null; CHAR_OCTET_LENGTH=-1; ORDINAL_POSITION=3; IS_NULLABLE=YES; SCOPE_CATALOG=null; SCOPE_SCHEMA=null; SCOPE_TABLE=null; SOURCE_DATA_TYPE=null; IS_AUTOINCREMENT=; IS_GENERATEDCOLUMN=\n"
+                      + "TABLE_CAT=null; TABLE_SCHEM=adhoc; TABLE_NAME=V; COLUMN_NAME=salary; DATA_TYPE=7; TYPE_NAME=JavaType(float) NOT NULL; COLUMN_SIZE=-1; BUFFER_LENGTH=null; DECIMAL_DIGITS=null; NUM_PREC_RADIX=10; NULLABLE=0; REMARKS=null; COLUMN_DEF=null; SQL_DATA_TYPE=null; SQL_DATETIME_SUB=null; CHAR_OCTET_LENGTH=-1; ORDINAL_POSITION=4; IS_NULLABLE=NO; SCOPE_CATALOG=null; SCOPE_SCHEMA=null; SCOPE_TABLE=null; SOURCE_DATA_TYPE=null; IS_AUTOINCREMENT=; IS_GENERATEDCOLUMN=\n"
+                      + "TABLE_CAT=null; TABLE_SCHEM=adhoc; TABLE_NAME=V; COLUMN_NAME=commission; DATA_TYPE=4; TYPE_NAME=JavaType(class java.lang.Integer); COLUMN_SIZE=-1; BUFFER_LENGTH=null; DECIMAL_DIGITS=null; NUM_PREC_RADIX=10; NULLABLE=1; REMARKS=null; COLUMN_DEF=null; SQL_DATA_TYPE=null; SQL_DATETIME_SUB=null; CHAR_OCTET_LENGTH=-1; ORDINAL_POSITION=5; IS_NULLABLE=YES; SCOPE_CATALOG=null; SCOPE_SCHEMA=null; SCOPE_TABLE=null; SOURCE_DATA_TYPE=null; IS_AUTOINCREMENT=; IS_GENERATEDCOLUMN=\n",
                   CalciteAssert.toString(
                       metaData.getColumns(
                           null, "adhoc", "V", null)));
@@ -5608,6 +5542,44 @@ public class JdbcTest {
         CalciteAssert.that().with(CalciteAssert.Config.FOODMART_CLONE);
     with.query("explain plan for values (1, 'ab')")
         .returns("PLAN=EnumerableValues(tuples=[[{ 1, 'ab' }]])\n\n");
+    final String expectedXml = "PLAN=<RelNode type=\"EnumerableValues\">\n"
+        + "\t<Property name=\"tuples\">\n"
+        + "\t\t[{ 1, &#39;ab&#39; }]\t</Property>\n"
+        + "\t<Inputs/>\n"
+        + "</RelNode>\n"
+        + "\n";
+    with.query("explain plan as xml for values (1, 'ab')")
+        .returns(expectedXml);
+    final String expectedJson = "PLAN={\n"
+        + "  \"rels\": [\n"
+        + "    {\n"
+        + "      \"id\": \"0\",\n"
+        + "      \"relOp\": \"org.apache.calcite.adapter.enumerable.EnumerableValues\",\n"
+        + "      \"type\": [\n"
+        + "        {\n"
+        + "          \"type\": \"INTEGER\",\n"
+        + "          \"nullable\": false,\n"
+        + "          \"name\": \"EXPR$0\"\n"
+        + "        },\n"
+        + "        {\n"
+        + "          \"type\": \"CHAR\",\n"
+        + "          \"nullable\": false,\n"
+        + "          \"precision\": 2,\n"
+        + "          \"name\": \"EXPR$1\"\n"
+        + "        }\n"
+        + "      ],\n"
+        + "      \"tuples\": [\n"
+        + "        [\n"
+        + "          1,\n"
+        + "          \"ab\"\n"
+        + "        ]\n"
+        + "      ],\n"
+        + "      \"inputs\": []\n"
+        + "    }\n"
+        + "  ]\n"
+        + "}\n";
+    with.query("explain plan as json for values (1, 'ab')")
+        .returns(expectedJson);
     with.query("explain plan with implementation for values (1, 'ab')")
         .returns("PLAN=EnumerableValues(tuples=[[{ 1, 'ab' }]])\n\n");
     with.query("explain plan without implementation for values (1, 'ab')")
@@ -6141,7 +6113,30 @@ public class JdbcTest {
     final CalciteAssert.AssertThat with2 =
         CalciteAssert.that().with(Lex.JAVA);
     with2.query("select COUNT(*) as c from `metaData`.`tAbles`")
-        .throws_("Table 'metaData.tAbles' not found");
+        .throws_("Object 'metaData' not found; did you mean 'metadata'?");
+    with2.query("select COUNT(*) as c from `metaData`.`TABLES`")
+        .throws_("Object 'metaData' not found; did you mean 'metadata'?");
+    with2.query("select COUNT(*) as c from `metaData`.`tables`")
+        .throws_("Object 'metaData' not found; did you mean 'metadata'?");
+    with2.query("select COUNT(*) as c from `metaData`.`nonExistent`")
+        .throws_("Object 'metaData' not found; did you mean 'metadata'?");
+    with2.query("select COUNT(*) as c from `metadata`.`tAbles`")
+        .throws_("Object 'tAbles' not found within 'metadata'; did you mean 'TABLES'?");
+  }
+
+  /** Test case for
+   * <a href="https://issues.apache.org/jira/browse/CALCITE-1563">[CALCITE-1563]
+   * In case-insensitive connection, non-existent tables use alphabetically
+   * preceding table</a>. */
+  @Test public void testLexCaseInsensitiveFindsNonexistentTable() {
+    final CalciteAssert.AssertThat with =
+        CalciteAssert.that().with(Lex.MYSQL);
+    // With [CALCITE-1563], the following query succeeded; it queried
+    // metadata.tables.
+    with.query("select COUNT(*) as c from `metaData`.`zoo`")
+        .throws_("Object 'zoo' not found within 'metadata'");
+    with.query("select COUNT(*) as c from `metaData`.`tAbLes`")
+        .returns("c=2\n");
   }
 
   /** Tests case-insensitive resolution of sub-query columns.
@@ -6187,7 +6182,7 @@ public class JdbcTest {
   /** Tests that {@link Hook#PARSE_TREE} works. */
   @Test public void testHook() {
     final int[] callCount = {0};
-    final Hook.Closeable hook = Hook.PARSE_TREE.addThread(
+    try (Hook.Closeable hook = Hook.PARSE_TREE.addThread(
         new Function<Object[], Object>() {
           public Void apply(Object[] args) {
             assertThat(args.length, equalTo(2));
@@ -6200,8 +6195,7 @@ public class JdbcTest {
             ++callCount[0];
             return null;
           }
-        });
-    try {
+        })) {
       // Simple query does not run the hook.
       testSimple();
       assertThat(callCount[0], equalTo(0));
@@ -6209,8 +6203,6 @@ public class JdbcTest {
       // Non-trivial query runs hook once.
       testGroupByNull();
       assertThat(callCount[0], equalTo(1));
-    } finally {
-      hook.close();
     }
   }
 
@@ -6289,6 +6281,42 @@ public class JdbcTest {
     aSubSchemaMap.put("b", new AbstractSchema());
     // explicit should win implicit.
     assertThat(aSchema.getSubSchemaNames().size(), is(2));
+  }
+
+  @Test public void testSimpleCalciteSchemaWithView() throws Exception {
+    final SchemaPlus rootSchema = CalciteSchema.createRootSchema(false, false).plus();
+
+    final Multimap<String, org.apache.calcite.schema.Function> functionMap =
+        LinkedListMultimap.create();
+    // create schema "/a"
+    final SchemaPlus aSchema = rootSchema.add("a",
+        new AbstractSchema() {
+          @Override protected Multimap<String, org.apache.calcite.schema.Function>
+          getFunctionMultimap() {
+            return functionMap;
+          }
+        });
+    // add view definition
+    final String viewName = "V";
+    final org.apache.calcite.schema.Function view =
+        ViewTable.viewMacro(rootSchema.getSubSchema("a"),
+            "values('1', '2')", null, null, false);
+    functionMap.put(viewName, view);
+
+    final CalciteSchema calciteSchema = CalciteSchema.from(aSchema);
+    assertThat(
+        calciteSchema.getTableBasedOnNullaryFunction(viewName, true), notNullValue());
+    assertThat(
+        calciteSchema.getTableBasedOnNullaryFunction(viewName, false), notNullValue());
+    assertThat(
+        calciteSchema.getTableBasedOnNullaryFunction("V1", true), nullValue());
+    assertThat(
+        calciteSchema.getTableBasedOnNullaryFunction("V1", false), nullValue());
+
+    assertThat(calciteSchema.getFunctions(viewName, true), hasItem(view));
+    assertThat(calciteSchema.getFunctions(viewName, false), hasItem(view));
+    assertThat(calciteSchema.getFunctions("V1", true), not(hasItem(view)));
+    assertThat(calciteSchema.getFunctions("V1", false), not(hasItem(view)));
   }
 
   @Test public void testSchemaCaching() throws Exception {
@@ -6388,7 +6416,7 @@ public class JdbcTest {
     assertThat(a2CalciteSchema.getTable("taBle1", true), nullValue());
     assertThat(a2CalciteSchema.getTable("taBle1", false), notNullValue());
     final TableMacro function =
-        ViewTable.viewMacro(a2Schema, "values 1", null, null);
+        ViewTable.viewMacro(a2Schema, "values 1", null, null, null);
     Util.discard(function);
 
     connection.close();
@@ -6680,9 +6708,15 @@ public class JdbcTest {
       this.commission = commission;
     }
 
-    public String toString() {
+    @Override public String toString() {
       return "Employee [empid: " + empid + ", deptno: " + deptno
           + ", name: " + name + "]";
+    }
+
+    @Override public boolean equals(Object obj) {
+      return obj == this
+          || obj instanceof Employee
+          && empid == ((Employee) obj).empid;
     }
   }
 
@@ -6702,9 +6736,15 @@ public class JdbcTest {
       this.location = location;
     }
 
-    public String toString() {
+    @Override public String toString() {
       return "Department [deptno: " + deptno + ", name: " + name
           + ", employees: " + employees + ", location: " + location + "]";
+    }
+
+    @Override public boolean equals(Object obj) {
+      return obj == this
+          || obj instanceof Department
+          && deptno == ((Department) obj).deptno;
     }
   }
 
@@ -6720,6 +6760,13 @@ public class JdbcTest {
     @Override public String toString() {
       return "Location [x: " + x + ", y: " + y + "]";
     }
+
+    @Override public boolean equals(Object obj) {
+      return obj == this
+          || obj instanceof Location
+          && x == ((Location) obj).x
+          && y == ((Location) obj).y;
+    }
   }
 
   public static class Dependent {
@@ -6733,6 +6780,13 @@ public class JdbcTest {
 
     @Override public String toString() {
       return "Dependent [empid: " + empid + ", name: " + name + "]";
+    }
+
+    @Override public boolean equals(Object obj) {
+      return obj == this
+          || obj instanceof Dependent
+          && empid == ((Dependent) obj).empid
+          && Objects.equals(name, ((Dependent) obj).name);
     }
   }
 
@@ -6758,6 +6812,12 @@ public class JdbcTest {
       this.EMPNO = EMPNO;
       this.DEPTNO = DEPTNO;
     }
+
+    @Override public boolean equals(Object obj) {
+      return obj == this
+          || obj instanceof LingualEmp
+          && EMPNO == ((LingualEmp) obj).EMPNO;
+    }
   }
 
   public static class FoodmartJdbcSchema extends JdbcSchema {
@@ -6775,6 +6835,12 @@ public class JdbcTest {
     public Customer(int customer_id) {
       this.customer_id = customer_id;
     }
+
+    @Override public boolean equals(Object obj) {
+      return obj == this
+          || obj instanceof Customer
+          && customer_id == ((Customer) obj).customer_id;
+    }
   }
 
   public static class SalesFact {
@@ -6784,6 +6850,13 @@ public class JdbcTest {
     public SalesFact(int cust_id, int prod_id) {
       this.cust_id = cust_id;
       this.prod_id = prod_id;
+    }
+
+    @Override public boolean equals(Object obj) {
+      return obj == this
+          || obj instanceof SalesFact
+          && cust_id == ((SalesFact) obj).cust_id
+          && prod_id == ((SalesFact) obj).prod_id;
     }
   }
 
@@ -6803,9 +6876,10 @@ public class JdbcTest {
         RelNode child,
         TableModify.Operation operation,
         List<String> updateColumnList,
+        List<RexNode> sourceExpressionList,
         boolean flattened) {
       return LogicalTableModify.create(table, catalogReader, child, operation,
-          updateColumnList, flattened);
+          updateColumnList, sourceExpressionList, flattened);
     }
   }
 
@@ -6881,10 +6955,7 @@ public class JdbcTest {
           final Map<String, Table> tableMap = super.getTableMap();
           final Table table = tableMap.get("emps");
           final String tableName = (String) operand.get("tableName");
-          return ImmutableMap.<String, Table>builder()
-              .putAll(tableMap)
-              .put(tableName, table)
-              .build();
+          return FlatLists.append(tableMap, tableName, table);
         }
 
         @Override public boolean isMutable() {

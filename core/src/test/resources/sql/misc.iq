@@ -64,6 +64,71 @@ group by "hr"."emps"."empid";
 
 !ok
 
+# Case-sensitive errors
+select empid from "hr"."emps";
+Column 'EMPID' not found in any table; did you mean 'empid'?
+!error
+
+select empid from "hr".emps;
+Object 'EMPS' not found within 'hr'; did you mean 'emps'?
+!error
+
+select empid from hr.emps;
+Object 'HR' not found; did you mean 'hr'?
+!error
+
+select empid from bad_schema.bad_table;
+Object 'BAD_SCHEMA' not found
+!error
+
+select empid from bad_cat.bad_schema.bad_table;
+Object 'BAD_CAT' not found
+!error
+
+select empid from "catalog".bad_schema.bad_table;
+Object 'catalog' not found
+!error
+
+select empid from catalog.bad_schema.bad_table;
+Object 'CATALOG' not found
+!error
+
+select empid from catalog.HR.bad_table;
+Object 'CATALOG' not found
+!error
+
+select empid from catalog."hr".bad_table;
+Object 'CATALOG' not found
+!error
+
+select empid from catalog."hr".emp;
+Object 'CATALOG' not found
+!error
+
+select empid from HR.bad_table;
+Object 'HR' not found; did you mean 'hr'?
+!error
+
+select empid from "HR".bad_table;
+Object 'HR' not found; did you mean 'hr'?
+!error
+
+select empid from HR."emps";
+Object 'HR' not found; did you mean 'hr'?
+!error
+
+select empid from "hr".bad_table;
+Object 'BAD_TABLE' not found within 'hr'
+!error
+
+select empid from "hr".emps;
+Object 'EMPS' not found within 'hr'; did you mean 'emps'?
+!error
+
+select empid from "hr";
+Object 'hr' not found
+!error
+
 # [CALCITE-307] CAST(timestamp AS DATE) gives ClassCastException
 # Based on [DRILL-1051]
 with data(c_row, c_timestamp) as (select * from (values
@@ -377,7 +442,7 @@ where not exists (
 (1 row)
 
 !ok
-EnumerableCalc(expr#0..6=[{inputs}], expr#7=[IS NOT NULL($t6)], expr#8=[NOT($t7)], proj#0..4=[{exprs}], $condition=[$t8])
+EnumerableCalc(expr#0..6=[{inputs}], expr#7=[IS NULL($t6)], proj#0..4=[{exprs}], $condition=[$t7])
   EnumerableJoin(condition=[=($1, $5)], joinType=[left])
     EnumerableTableScan(table=[[hr, emps]])
     EnumerableAggregate(group=[{1}], agg#0=[MIN($0)])
@@ -407,7 +472,7 @@ or not exists (
 (3 rows)
 
 !ok
-EnumerableCalc(expr#0..7=[{inputs}], expr#8=[IS NOT NULL($t5)], expr#9=[NOT($t8)], expr#10=[IS NOT NULL($t7)], expr#11=[NOT($t10)], expr#12=[OR($t9, $t11)], proj#0..4=[{exprs}], $condition=[$t12])
+EnumerableCalc(expr#0..7=[{inputs}], expr#8=[IS NULL($t5)], expr#9=[IS NULL($t7)], expr#10=[OR($t8, $t9)], proj#0..4=[{exprs}], $condition=[$t10])
   EnumerableJoin(condition=[=($0, $6)], joinType=[left])
     EnumerableCalc(expr#0..6=[{inputs}], proj#0..4=[{exprs}], $f0=[$t6])
       EnumerableJoin(condition=[=($1, $5)], joinType=[left])
@@ -424,16 +489,29 @@ EnumerableCalc(expr#0..7=[{inputs}], expr#8=[IS NOT NULL($t5)], expr#9=[NOT($t8)
         EnumerableJoin(condition=[=($1, $3)], joinType=[inner])
           EnumerableCalc(expr#0=[{inputs}], expr#1=[CAST($t0):INTEGER NOT NULL], proj#0..1=[{exprs}])
             EnumerableAggregate(group=[{0}])
-              EnumerableSemiJoin(condition=[=($1, $2)], joinType=[inner])
-                EnumerableCalc(expr#0..4=[{inputs}], proj#0..1=[{exprs}])
-                  EnumerableTableScan(table=[[hr, emps]])
-                EnumerableJoin(condition=[=($0, $1)], joinType=[inner])
-                  EnumerableAggregate(group=[{1}])
-                    EnumerableTableScan(table=[[hr, emps]])
-                  EnumerableCalc(expr#0..3=[{inputs}], deptno=[$t0])
-                    EnumerableTableScan(table=[[hr, depts]])
+              EnumerableTableScan(table=[[hr, emps]])
           EnumerableCalc(expr#0..3=[{inputs}], expr#4=[90], expr#5=[+($t0, $t4)], deptno=[$t0], $f1=[$t5])
             EnumerableTableScan(table=[[hr, depts]])
+!plan
+
+# Left join to a relation with one row is recognized as a trivial semi-join
+# and eliminated.
+select e."deptno"
+from "hr"."emps" as e
+left join (select count(*) from "hr"."depts") on true;
++--------+
+| deptno |
++--------+
+|     10 |
+|     10 |
+|     10 |
+|     20 |
++--------+
+(4 rows)
+
+!ok
+EnumerableCalc(expr#0..4=[{inputs}], deptno=[$t1])
+  EnumerableTableScan(table=[[hr, emps]])
 !plan
 
 # Filter combined with an OR filter.
@@ -613,7 +691,7 @@ EnumerableCalc(expr#0..1=[{inputs}], expr#2=[1], expr#3=[=($t0, $t2)], proj#0..1
   EnumerableTableScan(table=[[foodmart2, days]])
 !plan
 
-# [HIVE-5873] Semi-join to count subquery
+# [HIVE-5873] Semi-join to count sub-query
 # [CALCITE-365] AssertionError while translating query with WITH and correlated sub-query
 !if (false) {
 with parts (PNum, OrderOnHand)
@@ -691,8 +769,8 @@ group by case when a=1 then 1 else 2 end;
 
 !ok
 
-# [DERBY-4450] GROUP BY in an IN-subquery inside HAVING clause whose select list
-# is subset of group by columns.
+# [DERBY-4450] GROUP BY in an IN-sub-query inside HAVING clause whose select
+# list is subset of group by columns.
 select sum("day") from "days" group by "week_day" having "week_day" in (
   select "week_day" from "days" group by "week_day", "day");
 +--------+
@@ -1195,6 +1273,17 @@ from "scott".dept;
 
 !ok
 
+# [CALCITE-1486] Invalid "Invalid literal" error for complex expression
+select 8388608/(60+27.39);
++-------------------+
+| EXPR$0            |
++-------------------+
+| 95990.47945989244 |
++-------------------+
+(1 row)
+
+!ok
+
 # [CALCITE-1120] Support SELECT without FROM
 select 2 + 2;
 +--------+
@@ -1250,6 +1339,36 @@ select 3, 'c';
 
 !ok
 
+# Composite UNION
+select deptno, deptno from "scott".emp
+union
+select deptno, deptno from "scott".dept;
++--------+--------+
+| DEPTNO | DEPTNO |
++--------+--------+
+|     10 |     10 |
+|     20 |     20 |
+|     30 |     30 |
+|     40 |     40 |
++--------+--------+
+(4 rows)
+
+!ok
+
+# Composite MINUS
+select deptno, deptno from "scott".emp
+except
+select deptno, deptno from "scott".dept where deptno = 10;
++--------+--------+
+| DEPTNO | DEPTNO |
++--------+--------+
+|     20 |     20 |
+|     30 |     30 |
++--------+--------+
+(2 rows)
+
+!ok
+
 select * from (
   select 2 as a, 3 as b)
 where a < b;
@@ -1279,6 +1398,431 @@ select count(*) as c from "scott".dept where exists (select 1);
 +---+
 | 4 |
 +---+
+(1 row)
+
+!ok
+
+# INTERSECT
+select deptno from "scott".emp
+intersect
+select deptno from "scott".dept;
++--------+
+| DEPTNO |
++--------+
+|     10 |
+|     20 |
+|     30 |
++--------+
+(3 rows)
+
+!ok
+
+# INTERSECT DISTINCT means the same as INTERSECT
+select deptno from "scott".emp
+intersect distinct
+select deptno from "scott".dept;
++--------+
+| DEPTNO |
++--------+
+|     10 |
+|     20 |
+|     30 |
++--------+
+(3 rows)
+
+!ok
+
+# INTERSECT can return NULL values
+select comm from "scott".emp where mgr = 7698
+intersect
+select comm from "scott".emp where deptno = 10;
++------+
+| COMM |
++------+
+|      |
++------+
+(1 row)
+
+!ok
+
+# As above, composite
+select job, comm from "scott".emp where mgr = 7698
+intersect
+select job, comm from "scott".emp where deptno = 10;
++-------+------+
+| JOB   | COMM |
++-------+------+
+| CLERK |      |
++-------+------+
+(1 row)
+
+!ok
+
+# Make sure that IN does not compare the shorter of two strings.
+# If it did, 'MARTIN' would be emitted.
+select ename, deptno
+from "scott".emp
+where ename in ('MARTINGALE', 'WARD');
++-------+--------+
+| ENAME | DEPTNO |
++-------+--------+
+| WARD  |     30 |
++-------+--------+
+(1 row)
+
+!ok
+
+# [DRILL-4906]
+select (case when (true) then 1 end) from (values(1));
++--------+
+| EXPR$0 |
++--------+
+|      1 |
++--------+
+(1 row)
+
+!ok
+EXPR$0 INTEGER(10)
+!type
+
+# Cast an character literal to a timestamp; note: the plan does not contain CAST
+values cast('1969-07-21 12:34:56' as timestamp);
++---------------------+
+| EXPR$0              |
++---------------------+
+| 1969-07-21 12:34:56 |
++---------------------+
+(1 row)
+
+!ok
+EnumerableCalc(expr#0=[{inputs}], expr#1=[1969-07-21 12:34:56], EXPR$0=[$t1])
+  EnumerableValues(tuples=[[{ 0 }]])
+!plan
+
+# Cast a character literal to a date; note: the plan does not contain CAST
+values cast('1969-07-21' as date);
++------------+
+| EXPR$0     |
++------------+
+| 1969-07-21 |
++------------+
+(1 row)
+
+!ok
+EnumerableCalc(expr#0=[{inputs}], expr#1=[1969-07-21], EXPR$0=[$t1])
+  EnumerableValues(tuples=[[{ 0 }]])
+!plan
+
+# Slightly different format
+# (Incidentally, this format is not allowed in date literals, per the standard)
+values cast('1989-7-4' as date);
++------------+
+| EXPR$0     |
++------------+
+| 1989-07-04 |
++------------+
+(1 row)
+
+!ok
+
+# Cast a character literal to an integer; note: the plan does not contain CAST
+values cast('196907' as integer);
++--------+
+| EXPR$0 |
++--------+
+| 196907 |
++--------+
+(1 row)
+
+!ok
+EnumerableCalc(expr#0=[{inputs}], expr#1=[196907], EXPR$0=[$t1])
+  EnumerableValues(tuples=[[{ 0 }]])
+!plan
+
+# Cast an integer literal to a bigint; note: the plan does not contain CAST
+values cast(123 as bigint);
++--------+
+| EXPR$0 |
++--------+
+|    123 |
++--------+
+(1 row)
+
+!ok
+EnumerableCalc(expr#0=[{inputs}], expr#1=[123], EXPR$0=[$t1])
+  EnumerableValues(tuples=[[{ 0 }]])
+!plan
+
+# Cast an integer literal to a decimal; note: the plan does not contain CAST
+values cast('123.45' as decimal(4, 2));
++--------+
+| EXPR$0 |
++--------+
+| 123.45 |
++--------+
+(1 row)
+
+!ok
+EnumerableCalc(expr#0=[{inputs}], expr#1=[123.45], EXPR$0=[$t1])
+  EnumerableValues(tuples=[[{ 0 }]])
+!plan
+
+# Cast a character literal to a decimal; note: the plan does not contain CAST
+values cast('123.45' as decimal(4, 2));
++--------+
+| EXPR$0 |
++--------+
+| 123.45 |
++--------+
+(1 row)
+
+!ok
+EnumerableCalc(expr#0=[{inputs}], expr#1=[123.45], EXPR$0=[$t1])
+  EnumerableValues(tuples=[[{ 0 }]])
+!plan
+
+# Cast a character literal to a double; note: the plan does not contain CAST
+values cast('-123.45' as double);
++---------+
+| EXPR$0  |
++---------+
+| -123.45 |
++---------+
+(1 row)
+
+!ok
+EnumerableCalc(expr#0=[{inputs}], expr#1=[-1.2345E2], EXPR$0=[$t1])
+  EnumerableValues(tuples=[[{ 0 }]])
+!plan
+
+values cast('false' as boolean);
++--------+
+| EXPR$0 |
++--------+
+| false  |
++--------+
+(1 row)
+
+!ok
+EnumerableCalc(expr#0=[{inputs}], expr#1=[false], EXPR$0=[$t1])
+  EnumerableValues(tuples=[[{ 0 }]])
+!plan
+
+values cast('TRUE' as boolean);
++--------+
+| EXPR$0 |
++--------+
+| true   |
++--------+
+(1 row)
+
+!ok
+EnumerableCalc(expr#0=[{inputs}], expr#1=[true], EXPR$0=[$t1])
+  EnumerableValues(tuples=[[{ 0 }]])
+!plan
+
+values cast('TR' || 'UE' as boolean);
++--------+
+| EXPR$0 |
++--------+
+| true   |
++--------+
+(1 row)
+
+!ok
+EnumerableCalc(expr#0=[{inputs}], expr#1=['TR'], expr#2=['UE'], expr#3=[||($t1, $t2)], expr#4=[CAST($t3):BOOLEAN NOT NULL], EXPR$0=[$t4])
+  EnumerableValues(tuples=[[{ 0 }]])
+!plan
+
+!if (fixed.calcite1439) {
+values cast('null' as boolean);
+!error
+!plan
+
+values cast('' as date);
+!error
+
+values cast('' as timestamp);
+!error
+
+values cast('' as integer);
+!error
+
+values cast('' as boolean);
+!error
+
+values cast('' as double);
+!error
+
+# Postgres fails:
+#  ERROR:  invalid input syntax for integer: "1.56"
+values cast('15.6' as integer);
+!error
+
+# Postgres fails:
+#  ERROR:  invalid input syntax for integer: " - 5 "
+values cast(' - 5 ' as double);
+!error
+
+# Out of TINYINT range (max 127)
+values cast('200' as tinyint);
+!error
+
+# Out of SMALLINT range (max 32767)
+values cast('50000' as smallint);
+!error
+
+# Out of INTEGER range (max 2.1e9)
+values cast('4567891234' as integer);
+!error
+
+# Out of BIGINT range (max 9.2e18)
+values cast('12345678901234567890' as bigint);
+!error
+
+# Out of REAL range
+values cast('12.34e56' as real);
+!error
+
+# Out of FLOAT range
+values cast('12.34e5678' as float);
+!error
+
+# Out of DOUBLE range
+values cast('12.34e5678' as double);
+!error
+
+!}
+
+# Postgres succeeds
+values cast(' -5 ' as double);
++--------+
+| EXPR$0 |
++--------+
+|   -5.0 |
++--------+
+(1 row)
+
+!ok
+
+# RAND_INTEGER with seed
+select i, rand_integer(1, 5) as r
+from (values 1, 2, 3, 4, 5) as t(i);
++---+---+
+| I | R |
++---+---+
+| 1 | 0 |
+| 2 | 3 |
+| 3 | 2 |
+| 4 | 3 |
+| 5 | 4 |
++---+---+
+(5 rows)
+
+!ok
+
+# Same query, should yield same results
+select i, rand_integer(1, 5) as r
+from (values 1, 2, 3, 4, 5) as t(i);
++---+---+
+| I | R |
++---+---+
+| 1 | 0 |
+| 2 | 3 |
+| 3 | 2 |
+| 4 | 3 |
+| 5 | 4 |
++---+---+
+(5 rows)
+
+!ok
+
+# Same query with different seed
+select i, rand_integer(-1, 5) as r
+from (values 1, 2, 3, 4, 5) as t(i);
++---+---+
+| I | R |
++---+---+
+| 1 | 3 |
+| 2 | 0 |
+| 3 | 4 |
+| 4 | 4 |
+| 5 | 4 |
++---+---+
+(5 rows)
+
+!ok
+
+# Same query with different bound
+select i, rand_integer(-1, 2) as r
+from (values 1, 2, 3, 4, 5) as t(i);
++---+---+
+| I | R |
++---+---+
+| 1 | 0 |
+| 2 | 0 |
+| 3 | 0 |
+| 4 | 1 |
+| 5 | 1 |
++---+---+
+(5 rows)
+
+!ok
+
+# RAND with seed
+select i, rand(-1) as r
+from (values 1, 2, 3, 4, 5) as t(i);
++---+---------------------+
+| I | R                   |
++---+---------------------+
+| 1 | 0.03305388522187047 |
+| 2 |  0.6573104025344794 |
+| 3 |  0.7450920948729041 |
+| 4 |  0.6624972807480889 |
+| 5 |  0.5532616835728703 |
++---+---------------------+
+(5 rows)
+
+!ok
+
+# PI function
+values pi;
++-------------------+
+| PI                |
++-------------------+
+| 3.141592653589793 |
++-------------------+
+(1 row)
+
+!ok
+
+# DEGREES function
+values (degrees(pi), degrees(-pi / 2));
++--------+--------+
+| EXPR$0 | EXPR$1 |
++--------+--------+
+|  180.0 |  -90.0 |
++--------+--------+
+(1 row)
+
+!ok
+
+# [CALCITE-1592] SqlToRelConverter throws UnsupportedOperationException if query has NOT ... NOT IN
+select * from "scott".emp where not (ename not in ('Fred'));
++-------+-------+-----+-----+----------+-----+------+--------+
+| EMPNO | ENAME | JOB | MGR | HIREDATE | SAL | COMM | DEPTNO |
++-------+-------+-----+-----+----------+-----+------+--------+
++-------+-------+-----+-----+----------+-----+------+--------+
+(0 rows)
+
+!ok
+
+select count(*) as c from "scott".emp where not (ename in ('Fred'));
++----+
+| C  |
++----+
+| 14 |
++----+
 (1 row)
 
 !ok

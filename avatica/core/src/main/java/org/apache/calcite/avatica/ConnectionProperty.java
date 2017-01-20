@@ -45,6 +45,10 @@ public interface ConnectionProperty {
   /** Whether the property is mandatory. */
   boolean required();
 
+  /** Class of values that this property can take. Most useful for
+   * {@link Type#ENUM} properties. */
+  Class valueClass();
+
   /** Data type of property. */
   enum Type {
     BOOLEAN,
@@ -53,17 +57,60 @@ public interface ConnectionProperty {
     ENUM,
     PLUGIN;
 
-    public boolean valid(Object defaultValue) {
+    /** Deduces the class of a property of this type, given the default value
+     * and the user-specified value class (each of which may be null, unless
+     * this is an enum or a plugin). */
+    public Class deduceValueClass(Object defaultValue, Class valueClass) {
+      if (valueClass != null) {
+        return valueClass;
+      }
+      if (defaultValue != null) {
+        final Class<?> c = defaultValue.getClass();
+        if (c.isAnonymousClass()) {
+          // for default values that are anonymous enums
+          return c.getSuperclass();
+        }
+        return c;
+      }
+      return defaultValueClass();
+    }
+
+    /** Returns whether a default value and value types are valid for this
+     * kind of property. */
+    public boolean valid(Object defaultValue, Class clazz) {
       switch (this) {
       case BOOLEAN:
-        return defaultValue instanceof Boolean;
+        return clazz == Boolean.class
+            && (defaultValue == null || defaultValue instanceof Boolean);
       case NUMBER:
-        return defaultValue instanceof Number;
+        return Number.class.isAssignableFrom(clazz)
+            && (defaultValue == null || defaultValue instanceof Number);
       case STRING:
+        return clazz == String.class
+            && (defaultValue == null || defaultValue instanceof String);
       case PLUGIN:
-        return defaultValue instanceof String;
+        return clazz != null
+            && (defaultValue == null || defaultValue instanceof String);
+      case ENUM:
+        return Enum.class.isAssignableFrom(clazz)
+            && (defaultValue == null || clazz.isInstance(defaultValue));
       default:
-        return defaultValue instanceof Enum;
+        throw new AssertionError();
+      }
+    }
+
+    public Class defaultValueClass() {
+      switch (this) {
+      case BOOLEAN:
+        return Boolean.class;
+      case NUMBER:
+        return Number.class;
+      case STRING:
+        return String.class;
+      case PLUGIN:
+        return Object.class;
+      default:
+        throw new AssertionError("must specify value class for an ENUM");
       }
     }
   }

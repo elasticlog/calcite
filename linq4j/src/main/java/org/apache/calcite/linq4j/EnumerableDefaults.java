@@ -556,6 +556,9 @@ public abstract class EnumerableDefaults {
   public static <TSource> Enumerable<TSource> except(
       Enumerable<TSource> source0, Enumerable<TSource> source1,
       EqualityComparer<TSource> comparer) {
+    if (comparer == Functions.identityComparer()) {
+      return except(source0, source1);
+    }
     Set<Wrapped<TSource>> set = new HashSet<>();
     Function1<TSource, Wrapped<TSource>> wrapper = wrapperFor(comparer);
     source0.select(wrapper).into(set);
@@ -994,6 +997,9 @@ public abstract class EnumerableDefaults {
   public static <TSource> Enumerable<TSource> intersect(
       Enumerable<TSource> source0, Enumerable<TSource> source1,
       EqualityComparer<TSource> comparer) {
+    if (comparer == Functions.identityComparer()) {
+      return intersect(source0, source1);
+    }
     Set<Wrapped<TSource>> set0 = new HashSet<>();
     Function1<TSource, Wrapped<TSource>> wrapper = wrapperFor(comparer);
     source0.select(wrapper).into(set0);
@@ -2902,6 +2908,7 @@ public abstract class EnumerableDefaults {
             source, (Class) Object.class, null, null);
   }
 
+  /** Default implementation of {@link ExtendedEnumerable#into(Collection)}. */
   public static <T, C extends Collection<? super T>> C into(
       Enumerable<T> source, C sink) {
     try (Enumerator<T> enumerator = source.enumerator()) {
@@ -2910,6 +2917,15 @@ public abstract class EnumerableDefaults {
         sink.add(t);
       }
     }
+    return sink;
+  }
+
+  /** Default implementation of {@link ExtendedEnumerable#removeAll(Collection)}. */
+  public static <T, C extends Collection<? super T>> C remove(
+      Enumerable<T> source, C sink) {
+    List<T> tempList = new ArrayList<>();
+    source.into(tempList);
+    sink.removeAll(tempList);
     return sink;
   }
 

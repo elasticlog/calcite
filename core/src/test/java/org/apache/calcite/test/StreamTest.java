@@ -51,7 +51,10 @@ import java.util.Iterator;
 import java.util.Map;
 
 import static org.hamcrest.CoreMatchers.equalTo;
+import static org.hamcrest.CoreMatchers.is;
 import static org.junit.Assert.assertThat;
+import static org.junit.Assert.assertTrue;
+import static org.junit.Assert.fail;
 
 /**
  * Tests for streaming queries.
@@ -115,7 +118,7 @@ public class StreamTest {
             + "  LogicalProject(ROWTIME=[$0], ID=[$1], PRODUCT=[$2], UNITS=[$3])\n"
             + "    LogicalTableScan(table=[[STREAMS, ORDERS]])\n")
         .explainContains("EnumerableInterpreter\n"
-            + "  BindableTableScan(table=[[]])")
+            + "  BindableTableScan(table=[[STREAMS, ORDERS, (STREAM)]])")
         .returns(
             startsWith(
                 "ROWTIME=2015-02-15 10:15:00; ID=1; PRODUCT=paint; UNITS=10",
@@ -134,7 +137,7 @@ public class StreamTest {
         .explainContains(
             "EnumerableCalc(expr#0..3=[{inputs}], expr#4=[6], expr#5=[>($t3, $t4)], PRODUCT=[$t2], $condition=[$t5])\n"
                 + "  EnumerableInterpreter\n"
-                + "    BindableTableScan(table=[[]])")
+                + "    BindableTableScan(table=[[STREAMS, ORDERS, (STREAM)]])")
         .returns(
             startsWith("PRODUCT=paint",
                 "PRODUCT=brush"));
@@ -159,7 +162,7 @@ public class StreamTest {
                 + "  EnumerableAggregate(group=[{0, 1}], C=[COUNT()])\n"
                 + "    EnumerableCalc(expr#0..3=[{inputs}], expr#4=[FLAG(HOUR)], expr#5=[FLOOR($t0, $t4)], ROWTIME=[$t5], PRODUCT=[$t2])\n"
                 + "      EnumerableInterpreter\n"
-                + "        BindableTableScan(table=[[]])")
+                + "        BindableTableScan(table=[[STREAMS, ORDERS, (STREAM)]])")
         .returns(
             startsWith("ROWTIME=2015-02-15 10:00:00; PRODUCT=paint; C=2"));
   }
@@ -180,7 +183,7 @@ public class StreamTest {
             "EnumerableSort(sort0=[$0], sort1=[$1], dir0=[ASC], dir1=[DESC])\n"
                 + "  EnumerableCalc(expr#0..3=[{inputs}], expr#4=[FLAG(HOUR)], expr#5=[FLOOR($t0, $t4)], ROWTIME=[$t5], PRODUCT=[$t2], UNITS=[$t3])\n"
                 + "    EnumerableInterpreter\n"
-                + "      BindableTableScan(table=[[]])")
+                + "      BindableTableScan(table=[[STREAMS, ORDERS, (STREAM)]])")
         .returns(
             startsWith("ROWTIME=2015-02-15 10:00:00; PRODUCT=paper; UNITS=5",
                 "ROWTIME=2015-02-15 10:00:00; PRODUCT=paint; UNITS=10",
@@ -230,8 +233,47 @@ public class StreamTest {
         .query("select stream * from orders")
         .limit(100)
         .explainContains("EnumerableInterpreter\n"
-            + "  BindableTableScan(table=[[]])")
+            + "  BindableTableScan(table=[[INFINITE_STREAMS, ORDERS, (STREAM)]])")
         .returnsCount(100);
+  }
+
+  @Test(timeout = 10000) public void testStreamCancel() {
+    final String explain = "EnumerableInterpreter\n"
+        + "  BindableTableScan(table=[[INFINITE_STREAMS, ORDERS, (STREAM)]])";
+    CalciteAssert.model(STREAM_MODEL)
+        .withDefaultSchema(INFINITE_STREAM_SCHEMA_NAME)
+        .query("select stream * from orders")
+        .explainContains(explain)
+        .returns(
+            new Function<ResultSet, Void>() {
+              public Void apply(final ResultSet resultSet) {
+                int n = 0;
+                try {
+                  while (resultSet.next()) {
+                    if (++n == 5) {
+                      new Thread(
+                          new Runnable() {
+                            @Override public void run() {
+                              try {
+                                Thread.sleep(3);
+                                resultSet.getStatement().cancel();
+                              } catch (InterruptedException | SQLException e) {
+                                // ignore
+                              }
+                            }
+                          }).start();
+                    }
+                  }
+                  fail("expected cancel, got end-of-data");
+                } catch (SQLException e) {
+                  assertThat(e.getMessage(), is("Statement canceled"));
+                }
+                // With a 3 millisecond delay, typically n is between 200 - 400
+                // before cancel takes effect.
+                assertTrue("n is " + n, n > 5);
+                return null;
+              }
+            });
   }
 
   @Test public void testStreamToRelationJoin() {
@@ -244,7 +286,7 @@ public class StreamTest {
             + "  LogicalProject(ROWTIME=[$0], ORDERID=[$1], SUPPLIERID=[$5])\n"
             + "    LogicalProject(ROWTIME=[$0], ID=[$1], PRODUCT=[$2], UNITS=[$3], ID0=[$5], SUPPLIER=[$6])\n"
             + "      LogicalJoin(condition=[=($4, $5)], joinType=[inner])\n"
-            + "        LogicalProject(ROWTIME=[$0], ID=[$1], PRODUCT=[$2], UNITS=[$3], PRODUCT4=[CAST($2):VARCHAR(32) CHARACTER SET \"ISO-8859-1\" COLLATE \"ISO-8859-1$en_US$primary\" NOT NULL])\n"
+            + "        LogicalProject(ROWTIME=[$0], ID=[$1], PRODUCT=[$2], UNITS=[$3], PRODUCT0=[CAST($2):VARCHAR(32) CHARACTER SET \"ISO-8859-1\" COLLATE \"ISO-8859-1$en_US$primary\" NOT NULL])\n"
             + "          LogicalTableScan(table=[[STREAM_JOINS, ORDERS]])\n"
             + "        LogicalTableScan(table=[[STREAM_JOINS, PRODUCTS]])\n")
         .explainContains(""
@@ -252,7 +294,7 @@ public class StreamTest {
             + "  EnumerableJoin(condition=[=($4, $5)], joinType=[inner])\n"
             + "    EnumerableCalc(expr#0..3=[{inputs}], expr#4=[CAST($t2):VARCHAR(32) CHARACTER SET \"ISO-8859-1\" COLLATE \"ISO-8859-1$en_US$primary\" NOT NULL], proj#0..4=[{exprs}])\n"
             + "      EnumerableInterpreter\n"
-            + "        BindableTableScan(table=[[]])\n"
+            + "        BindableTableScan(table=[[STREAM_JOINS, ORDERS, (STREAM)]])\n"
             + "    EnumerableInterpreter\n"
             + "      BindableTableScan(table=[[STREAM_JOINS, PRODUCTS]])")
         .returns(

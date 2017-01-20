@@ -1,4 +1,4 @@
-# subquery.iq - Queries involving IN and EXISTS sub-queries
+# sub-query.iq - Queries involving IN and EXISTS sub-queries
 #
 # Licensed to the Apache Software Foundation (ASF) under one or more
 # contributor license agreements.  See the NOTICE file distributed with
@@ -312,7 +312,7 @@ GROUP BY emp.deptno;
 
 !ok
 
-# [DRILL-4407] Group by subquery causes Java NPE
+# [DRILL-4407] Group by sub-query causes Java NPE
 select count(*) as c
 from "scott".emp
 group by (select deptno from "scott".emp where empno = 10);
@@ -368,6 +368,74 @@ where e.job not in (
   select e2.job from "scott".emp as e2 where e2.deptno > e.deptno);
 !ok
 !plan
+!}
+
+# Condition that returns a NULL key.
+# Tested on Oracle.
+select count(*) as c
+from "scott".emp
+where sal + 100 not in (
+  select comm
+  from "scott".emp);
++---+
+| C |
++---+
+| 0 |
++---+
+(1 row)
+
+!ok
+
+# Condition that happens to eliminate all NULL keys.
+# The one missing row has {ename: 'MARTIN', comm: 1400}
+# Tested on Oracle.
+select count(*) as c
+from "scott".emp
+where sal + 100 not in (
+  select comm from "scott".emp
+  where job = 'SALESMAN');
++----+
+| C  |
++----+
+| 13 |
++----+
+(1 row)
+
+!ok
+
+# Condition that provably eliminates all NULL keys.
+# Tested on Oracle.
+select count(*) as c
+from "scott".emp
+where sal + 100 not in (
+  select comm
+  from "scott".emp
+  where comm < 1000);
++----+
+| C  |
++----+
+| 14 |
++----+
+(1 row)
+
+!ok
+
+# Correlated condition in NOT IN.
+# Tested on Oracle.
+!if (fixed.calcite1513) {
+select count(*) as c
+from "scott".emp as e
+where sal + 100 not in (
+  select comm
+  from "scott".emp
+  where job = e.job);
+     EMPNO ENAME      JOB              MGR HIREDATE         SAL       COMM     DEPTNO
+---------- ---------- --------- ---------- --------- ---------- ---------- ----------
+      7499 ALLEN      SALESMAN        7698 20-FEB-81       1600        300         30
+      7521 WARD       SALESMAN        7698 22-FEB-81       1250        500         30
+      7654 MARTIN     SALESMAN        7698 28-SEP-81       1250       1400         30
+      7844 TURNER     SALESMAN        7698 08-SEP-81       1500          0         30
+!ok
 !}
 
 # [CALCITE-864] Correlation variable has incorrect row type if it is populated
@@ -442,4 +510,38 @@ where d.dname = (
 
 !ok
 
-# End subquery.iq
+# Two EXISTS
+# [CALCITE-1511] AssertionError while decorrelating query with two EXISTS sub-queries
+select *
+from "scott".dept as d
+where exists (select 1 from "scott".emp where empno > d.deptno)
+and exists (select 0 from "scott".emp where deptno = d.deptno and ename = 'SMITH');
++--------+----------+--------+
+| DEPTNO | DNAME    | LOC    |
++--------+----------+--------+
+|     20 | RESEARCH | DALLAS |
++--------+----------+--------+
+(1 row)
+
+!ok
+
+# Two scalar sub-queries
+!if (fixed.calcite1045) {
+select deptno,
+  (select min(1) from "scott".emp where empno > d.deptno) as i0,
+  (select min(0) from "scott".emp where deptno = d.deptno and ename = 'SMITH') as i1
+from "scott".dept as d;
++--------+----+---+
+| DEPTNO | I0 | I1|
++--------+----+---+
+|     10 |  1 |   |
+|     20 |  1 | 0 |
+|     30 |  1 |   |
+|     40 |  1 |   |
++--------+----+---+
+(4 rows)
+
+!ok
+!}
+
+# End sub-query.iq

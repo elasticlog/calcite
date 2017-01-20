@@ -419,7 +419,7 @@ public enum SqlKind {
   EXPLICIT_TABLE,
 
   /**
-   * Scalar query; that is, a subquery used in an expression context, and
+   * Scalar query; that is, a sub-query used in an expression context, and
    * returning one row and one column.
    */
   SCALAR_QUERY,
@@ -581,6 +581,11 @@ public enum SqlKind {
    * The "RTRIM" function (Oracle).
    */
   RTRIM,
+
+  /**
+   * The "EXTRACT" function.
+   */
+  EXTRACT,
 
   /**
    * Call to a function using JDBC function syntax.
@@ -848,41 +853,8 @@ public enum SqlKind {
       EnumSet.of(COUNT, SUM, SUM0, MIN, MAX, LEAD, LAG, FIRST_VALUE,
           LAST_VALUE, COVAR_POP, COVAR_SAMP, REGR_SXX, REGR_SYY,
           AVG, STDDEV_POP, STDDEV_SAMP, VAR_POP, VAR_SAMP, NTILE, COLLECT,
-          FUSION, SINGLE_VALUE);
-
-  /**
-   * Category consisting of all expression operators.
-   *
-   * <p>A node is an expression if it is NOT one of the following:
-   * {@link #AS},
-   * {@link #ARGUMENT_ASSIGNMENT},
-   * {@link #DEFAULT},
-   * {@link #DESCENDING},
-   * {@link #SELECT},
-   * {@link #JOIN},
-   * {@link #OTHER_FUNCTION},
-   * {@link #CAST},
-   * {@link #TRIM},
-   * {@link #LITERAL_CHAIN},
-   * {@link #JDBC_FN},
-   * {@link #PRECEDING},
-   * {@link #FOLLOWING},
-   * {@link #ORDER_BY},
-   * {@link #COLLECTION_TABLE},
-   * {@link #TABLESAMPLE},
-   * or an aggregate function.
-   */
-  public static final Set<SqlKind> EXPRESSION =
-      EnumSet.complementOf(
-          concat(
-              EnumSet.of(AS, ARGUMENT_ASSIGNMENT, DEFAULT,
-                  DESCENDING, CUBE, ROLLUP, GROUPING_SETS, EXTEND,
-                  SELECT, JOIN, OTHER_FUNCTION, CAST, TRIM, FLOOR, CEIL,
-                  TIMESTAMP_ADD, TIMESTAMP_DIFF,
-                  LITERAL_CHAIN, JDBC_FN, PRECEDING, FOLLOWING, ORDER_BY,
-                  NULLS_FIRST, NULLS_LAST, COLLECTION_TABLE, TABLESAMPLE,
-                  VALUES, WITH, WITH_ITEM),
-              AGGREGATE));
+          FUSION, SINGLE_VALUE, ROW_NUMBER, RANK, PERCENT_RANK, DENSE_RANK,
+          CUME_DIST);
 
   /**
    * Category consisting of all DML operators.
@@ -911,7 +883,8 @@ public enum SqlKind {
           CREATE_TABLE, ALTER_TABLE, DROP_TABLE,
           CREATE_VIEW, ALTER_VIEW, DROP_VIEW,
           CREATE_SEQUENCE, ALTER_SEQUENCE, DROP_SEQUENCE,
-          CREATE_INDEX, ALTER_INDEX, DROP_INDEX);
+          CREATE_INDEX, ALTER_INDEX, DROP_INDEX,
+          SET_OPTION, OTHER_DDL);
 
   /**
    * Category consisting of query node types.
@@ -928,6 +901,40 @@ public enum SqlKind {
   public static final EnumSet<SqlKind> QUERY =
       EnumSet.of(SELECT, UNION, INTERSECT, EXCEPT, VALUES, WITH, ORDER_BY,
           EXPLICIT_TABLE);
+
+  /**
+   * Category consisting of all expression operators.
+   *
+   * <p>A node is an expression if it is NOT one of the following:
+   * {@link #AS},
+   * {@link #ARGUMENT_ASSIGNMENT},
+   * {@link #DEFAULT},
+   * {@link #DESCENDING},
+   * {@link #SELECT},
+   * {@link #JOIN},
+   * {@link #OTHER_FUNCTION},
+   * {@link #CAST},
+   * {@link #TRIM},
+   * {@link #LITERAL_CHAIN},
+   * {@link #JDBC_FN},
+   * {@link #PRECEDING},
+   * {@link #FOLLOWING},
+   * {@link #ORDER_BY},
+   * {@link #COLLECTION_TABLE},
+   * {@link #TABLESAMPLE},
+   * or an aggregate function, DML or DDL.
+   */
+  public static final Set<SqlKind> EXPRESSION =
+      EnumSet.complementOf(
+          concat(
+              EnumSet.of(AS, ARGUMENT_ASSIGNMENT, DEFAULT,
+                  DESCENDING, CUBE, ROLLUP, GROUPING_SETS, EXTEND, LATERAL,
+                  SELECT, JOIN, OTHER_FUNCTION, CAST, TRIM, FLOOR, CEIL,
+                  TIMESTAMP_ADD, TIMESTAMP_DIFF, EXTRACT,
+                  LITERAL_CHAIN, JDBC_FN, PRECEDING, FOLLOWING, ORDER_BY,
+                  NULLS_FIRST, NULLS_LAST, COLLECTION_TABLE, TABLESAMPLE,
+                  VALUES, WITH, WITH_ITEM),
+              AGGREGATE, DML, DDL));
 
   /**
    * Category of all SQL statement types.

@@ -32,6 +32,7 @@ import org.apache.calcite.rel.logical.LogicalTableScan;
 import org.apache.calcite.rel.type.RelDataType;
 import org.apache.calcite.rel.type.RelDataTypeField;
 import org.apache.calcite.rel.type.RelRecordType;
+import org.apache.calcite.runtime.Hook;
 import org.apache.calcite.schema.ExtensibleTable;
 import org.apache.calcite.schema.FilterableTable;
 import org.apache.calcite.schema.ModifiableTable;
@@ -169,15 +170,12 @@ public class RelOptTableImpl implements Prepare.PreparingTable {
     }
   }
 
-  public static RelOptTableImpl create(
-      RelOptSchema schema,
-      RelDataType rowType,
-      Table table) {
+  public static RelOptTableImpl create(RelOptSchema schema,
+      RelDataType rowType, Table table, ImmutableList<String> names) {
     assert table instanceof TranslatableTable
         || table instanceof ScannableTable
         || table instanceof ModifiableTable;
-    return new RelOptTableImpl(schema, rowType, ImmutableList.<String>of(),
-        table, null, null);
+    return new RelOptTableImpl(schema, rowType, names, table, null, null);
   }
 
   public <T> T unwrap(Class<T> clazz) {
@@ -254,7 +252,7 @@ public class RelOptTableImpl implements Prepare.PreparingTable {
       return ((TranslatableTable) table).toRel(context, this);
     }
     final RelOptCluster cluster = context.getCluster();
-    if (CalcitePrepareImpl.ENABLE_BINDABLE) {
+    if (Hook.ENABLE_BINDABLE.get(false)) {
       return LogicalTableScan.create(cluster, this);
     }
     if (CalcitePrepareImpl.ENABLE_ENUMERABLE
@@ -328,11 +326,11 @@ public class RelOptTableImpl implements Prepare.PreparingTable {
     return SqlAccessType.ALL;
   }
 
-  /** Im0plementation of {@link SchemaPlus} that wraps a regular schema and knows
+  /** Implementation of {@link SchemaPlus} that wraps a regular schema and knows
    * its name and parent.
    *
    * <p>It is read-only, and functionality is limited in other ways, it but
-   * allows table expressions to be genenerated. */
+   * allows table expressions to be generated. */
   private static class MySchemaPlus implements SchemaPlus {
     private final SchemaPlus parent;
     private final String name;

@@ -71,9 +71,9 @@ import java.util.Properties;
 import java.util.Random;
 import java.util.UUID;
 
-import static org.hamcrest.CoreMatchers.containsString;
 import static org.hamcrest.CoreMatchers.instanceOf;
 import static org.hamcrest.CoreMatchers.is;
+import static org.hamcrest.core.StringContains.containsString;
 import static org.junit.Assert.assertArrayEquals;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
@@ -180,6 +180,48 @@ public class RemoteMetaTest {
       rs.close();
       statement.close();
       conn.close();
+    } finally {
+      ConnectionSpec.getDatabaseLock().unlock();
+    }
+  }
+
+  /** Test case for
+   * <a href="https://issues.apache.org/jira/browse/CALCITE-1301">[CALCITE-1301]
+   * Add cancel flag to AvaticaStatement</a>. */
+  @Test public void testCancel() throws Exception {
+    ConnectionSpec.getDatabaseLock().lock();
+    try (AvaticaConnection conn = (AvaticaConnection) DriverManager.getConnection(url)) {
+      final AvaticaStatement statement = conn.createStatement();
+      final String sql = "select * from (values ('a', 1), ('b', 2))";
+      final ResultSet rs = statement.executeQuery(sql);
+      int count = 0;
+    loop:
+      for (;;) {
+        switch (count++) {
+        case 0:
+          assertThat(rs.next(), is(true));
+          break;
+        case 1:
+          rs.getStatement().cancel();
+          try {
+            boolean x = rs.next();
+            fail("expected exception, got " + x);
+          } catch (SQLException e) {
+            assertThat(e.getMessage(), is("Statement canceled"));
+          }
+          break loop;
+        default:
+          fail("count: " + count);
+        }
+      }
+      assertThat(count, is(2));
+      assertThat(statement.isClosed(), is(false));
+      rs.close();
+      assertThat(statement.isClosed(), is(false));
+      statement.close();
+      assertThat(statement.isClosed(), is(true));
+      statement.close();
+      assertThat(statement.isClosed(), is(true));
     } finally {
       ConnectionSpec.getDatabaseLock().unlock();
     }
@@ -680,6 +722,16 @@ public class RemoteMetaTest {
     default:
       fail("Unhandled serialization " + this.serialization);
       throw new RuntimeException();
+    }
+  }
+
+  @Test public void testDriverProperties() throws Exception {
+    final Properties props = new Properties();
+    props.setProperty("foo", "bar");
+    final Properties originalProps = (Properties) props.clone();
+    try (final Connection conn = DriverManager.getConnection(url, props)) {
+      // The contents of the two properties objects should not have changed after connecting.
+      assertEquals(props, originalProps);
     }
   }
 

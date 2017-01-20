@@ -31,6 +31,12 @@ public interface CalciteResource {
   @BaseMessage("line {0,number,#}, column {1,number,#}")
   Inst parserContext(int a0, int a1);
 
+  @BaseMessage("Bang equal ''!='' is not allowed under the current SQL conformance level")
+  ExInst<CalciteException> bangEqualNotAllowed();
+
+  @BaseMessage("APPLY operator is not allowed under the current SQL conformance level")
+  ExInst<CalciteException> applyNotAllowed();
+
   @BaseMessage("Illegal {0} literal {1}: {2}")
   ExInst<CalciteException> illegalLiteral(String a0, String a1, String a2);
 
@@ -152,14 +158,43 @@ public interface CalciteResource {
   @BaseMessage("Table ''{0}'' not found")
   ExInst<SqlValidatorException> tableNameNotFound(String a0);
 
+  @BaseMessage("Table ''{0}'' not found; did you mean ''{1}''?")
+  ExInst<SqlValidatorException> tableNameNotFoundDidYouMean(String a0,
+      String a1);
+
+  /** Same message as {@link #tableNameNotFound(String)} but a different kind
+   * of exception, so it can be used in {@code RelBuilder}. */
+  @BaseMessage("Table ''{0}'' not found")
+  ExInst<CalciteException> tableNotFound(String tableName);
+
+  @BaseMessage("Object ''{0}'' not found")
+  ExInst<SqlValidatorException> objectNotFound(String a0);
+
+  @BaseMessage("Object ''{0}'' not found within ''{1}''")
+  ExInst<SqlValidatorException> objectNotFoundWithin(String a0, String a1);
+
+  @BaseMessage("Object ''{0}'' not found; did you mean ''{1}''?")
+  ExInst<SqlValidatorException> objectNotFoundDidYouMean(String a0, String a1);
+
+  @BaseMessage("Object ''{0}'' not found within ''{1}''; did you mean ''{2}''?")
+  ExInst<SqlValidatorException> objectNotFoundWithinDidYouMean(String a0,
+      String a1, String a2);
+
   @BaseMessage("Table ''{0}'' is not a sequence")
   ExInst<SqlValidatorException> notASequence(String a0);
 
   @BaseMessage("Column ''{0}'' not found in any table")
   ExInst<SqlValidatorException> columnNotFound(String a0);
 
+  @BaseMessage("Column ''{0}'' not found in any table; did you mean ''{1}''?")
+  ExInst<SqlValidatorException> columnNotFoundDidYouMean(String a0, String a1);
+
   @BaseMessage("Column ''{0}'' not found in table ''{1}''")
   ExInst<SqlValidatorException> columnNotFoundInTable(String a0, String a1);
+
+  @BaseMessage("Column ''{0}'' not found in table ''{1}''; did you mean ''{2}''?")
+  ExInst<SqlValidatorException> columnNotFoundInTableDidYouMean(String a0,
+      String a1, String a2);
 
   @BaseMessage("Column ''{0}'' is ambiguous")
   ExInst<SqlValidatorException> columnAmbiguous(String a0);
@@ -407,8 +442,8 @@ public interface CalciteResource {
   @BaseMessage("The {0} function does not support the {1} data type.")
   ExInst<SqlValidatorException> minMaxBadType(String a0, String a1);
 
-  @BaseMessage("Only scalar subqueries allowed in select list.")
-  ExInst<SqlValidatorException> onlyScalarSubqueryAllowed();
+  @BaseMessage("Only scalar sub-queries allowed in select list.")
+  ExInst<SqlValidatorException> onlyScalarSubQueryAllowed();
 
   @BaseMessage("Ordinal out of range")
   ExInst<SqlValidatorException> orderByOrdinalOutOfRange();
@@ -604,8 +639,8 @@ public interface CalciteResource {
   @BaseMessage("View is not modifiable. No value is supplied for NOT NULL column ''{0}'' of base table ''{1}''")
   ExInst<SqlValidatorException> noValueSuppliedForViewColumn(String columnName, String tableName);
 
-  @BaseMessage("Table ''{0}'' not found")
-  ExInst<CalciteException> tableNotFound(String tableName);
+  @BaseMessage("Not a record type. The ''*'' operator requires a record")
+  ExInst<SqlValidatorException> starRequiresRecordType();
 
   @BaseMessage("FILTER expression must be of type BOOLEAN")
   ExInst<CalciteException> filterMustBeBoolean();
@@ -613,8 +648,12 @@ public interface CalciteResource {
   @BaseMessage("Cannot stream results of a query with no streaming inputs: ''{0}''. At least one input should be convertible to a stream")
   ExInst<SqlValidatorException> cannotStreamResultsForNonStreamingInputs(String inputs);
 
+  @BaseMessage("MINUS is not allowed under the current SQL conformance level")
+  ExInst<CalciteException> minusNotAllowed();
+
   @BaseMessage("SELECT must have a FROM clause")
   ExInst<SqlValidatorException> selectMissingFrom();
+
 }
 
 // End CalciteResource.java

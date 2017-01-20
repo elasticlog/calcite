@@ -178,7 +178,7 @@ public class CalciteMetaImpl extends MetaImpl {
       } catch (NoSuchFieldException e) {
         throw new RuntimeException(e);
       }
-      columns.add(columnMetaData(name, index, field.getType()));
+      columns.add(columnMetaData(name, index, field.getType(), false));
       fields.add(field);
       fieldNames.add(fieldName);
     }
@@ -452,7 +452,7 @@ public class CalciteMetaImpl extends MetaImpl {
 
   private ImmutableList<MetaTypeInfo> getAllDefaultType() {
     final ImmutableList.Builder<MetaTypeInfo> allTypeList =
-        new ImmutableList.Builder<>();
+        ImmutableList.builder();
     final CalciteConnectionImpl conn = (CalciteConnectionImpl) connection;
     final RelDataTypeSystem typeSystem = conn.typeFactory.getTypeSystem();
     for (SqlTypeName sqlTypeName : SqlTypeName.values()) {
@@ -463,16 +463,16 @@ public class CalciteMetaImpl extends MetaImpl {
               typeSystem.getLiteral(sqlTypeName, true),
               typeSystem.getLiteral(sqlTypeName, false),
               // All types are nullable
-              DatabaseMetaData.typeNullable,
+              (short) DatabaseMetaData.typeNullable,
               typeSystem.isCaseSensitive(sqlTypeName),
               // Making all type searchable; we may want to
               // be specific and declare under SqlTypeName
-              DatabaseMetaData.typeSearchable,
+              (short) DatabaseMetaData.typeSearchable,
               false,
               false,
               typeSystem.isAutoincrement(sqlTypeName),
-              sqlTypeName.getMinScale(),
-              typeSystem.getMaxScale(sqlTypeName),
+              (short) sqlTypeName.getMinScale(),
+              (short) typeSystem.getMaxScale(sqlTypeName),
               typeSystem.getNumTypeRadix(sqlTypeName)));
     }
     return allTypeList.build();

@@ -47,7 +47,6 @@ import org.apache.calcite.rel.RelNode;
 import org.apache.calcite.rel.RelVisitor;
 import org.apache.calcite.rel.convert.Converter;
 import org.apache.calcite.rel.convert.ConverterRule;
-import org.apache.calcite.rel.core.TableScan;
 import org.apache.calcite.rel.metadata.JaninoRelMetadataProvider;
 import org.apache.calcite.rel.metadata.RelMetadataProvider;
 import org.apache.calcite.rel.metadata.RelMetadataQuery;
@@ -87,6 +86,7 @@ import com.google.common.collect.LinkedListMultimap;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Maps;
 import com.google.common.collect.Multimap;
+import com.google.common.collect.Ordering;
 import com.google.common.collect.SetMultimap;
 import com.google.common.collect.Sets;
 
@@ -94,7 +94,6 @@ import java.io.PrintWriter;
 import java.io.StringWriter;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.Comparator;
@@ -103,7 +102,6 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.IdentityHashMap;
 import java.util.Iterator;
-import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -460,7 +458,7 @@ public class VolcanoPlanner extends AbstractRelOptPlanner {
     final List<RelOptMaterialization> applicableMaterializations =
         getApplicableMaterializations(originalRoot, materializations);
     useMaterializations(originalRoot, applicableMaterializations);
-    final Set<RelOptTable> queryTables = findTables(originalRoot);
+    final Set<RelOptTable> queryTables = RelOptUtil.findTables(originalRoot);
 
     // Use a lattice if the query uses at least the central (fact) table of the
     // lattice.
@@ -503,7 +501,7 @@ public class VolcanoPlanner extends AbstractRelOptPlanner {
         final List<String> qname = materialization.table.getQualifiedName();
         qnameMap.put(qname, materialization);
         for (RelOptTable usedTable
-            : findTables(materialization.queryRel)) {
+            : RelOptUtil.findTables(materialization.queryRel)) {
           usesGraph.addVertex(qname);
           usesGraph.addVertex(usedTable.getQualifiedName());
           usesGraph.addEdge(usedTable.getQualifiedName(), qname);
@@ -516,7 +514,7 @@ public class VolcanoPlanner extends AbstractRelOptPlanner {
     // actually use.)
     final Graphs.FrozenGraph<List<String>, DefaultEdge> frozenGraph =
         Graphs.makeImmutable(usesGraph);
-    final Set<RelOptTable> queryTablesUsed = findTables(root);
+    final Set<RelOptTable> queryTablesUsed = RelOptUtil.findTables(root);
     final List<RelOptMaterialization> applicableMaterializations = Lists.newArrayList();
     for (List<String> qname : TopologicalOrderIterator.of(usesGraph)) {
       RelOptMaterialization materialization = qnameMap.get(qname);
@@ -544,20 +542,6 @@ public class VolcanoPlanner extends AbstractRelOptPlanner {
       }
     }
     return false;
-  }
-
-  private static Set<RelOptTable> findTables(RelNode rel) {
-    final Set<RelOptTable> usedTables = new LinkedHashSet<>();
-    new RelVisitor() {
-      @Override public void visit(RelNode node, int ordinal, RelNode parent) {
-        if (node instanceof TableScan) {
-          usedTables.add(node.getTable());
-        }
-        super.visit(node, ordinal, parent);
-      }
-      // CHECKSTYLE: IGNORE 1
-    }.go(rel);
-    return usedTables;
   }
 
   /**
@@ -708,25 +692,6 @@ public class VolcanoPlanner extends AbstractRelOptPlanner {
         }
       }
     }
-  }
-
-  public boolean canConvert(RelTraitSet fromTraits, RelTraitSet toTraits) {
-    assert fromTraits.size() >= toTraits.size();
-
-    boolean canConvert = true;
-    for (int i = 0; (i < toTraits.size()) && canConvert; i++) {
-      RelTrait fromTrait = fromTraits.getTrait(i);
-      RelTrait toTrait = toTraits.getTrait(i);
-
-      assert fromTrait.getTraitDef() == toTrait.getTraitDef();
-      assert traitDefs.contains(fromTrait.getTraitDef());
-      assert traitDefs.contains(toTrait.getTraitDef());
-
-      canConvert =
-          fromTrait.getTraitDef().canConvert(this, fromTrait, toTrait);
-    }
-
-    return canConvert;
   }
 
   public RelNode changeTraits(final RelNode rel, RelTraitSet toTraits) {
@@ -1202,7 +1167,7 @@ public class VolcanoPlanner extends AbstractRelOptPlanner {
     assert fromTraits.size() >= toTraits.size();
 
     final boolean allowInfiniteCostConverters =
-        SaffronProperties.instance().allowInfiniteCostConverters.get();
+        SaffronProperties.INSTANCE.allowInfiniteCostConverters().get();
 
     // Traits may build on top of another...for example a collation trait
     // would typically come after a distribution trait since distribution
@@ -1363,9 +1328,7 @@ public class VolcanoPlanner extends AbstractRelOptPlanner {
     pw.println("Original rel:");
     pw.println(originalRootString);
     pw.println("Sets:");
-    RelSet[] sets = allSets.toArray(new RelSet[allSets.size()]);
-    Arrays.sort(
-        sets,
+    Ordering<RelSet> ordering = Ordering.from(
         new Comparator<RelSet>() {
           public int compare(
               RelSet o1,
@@ -1373,7 +1336,7 @@ public class VolcanoPlanner extends AbstractRelOptPlanner {
             return o1.id - o2.id;
           }
         });
-    for (RelSet set : sets) {
+    for (RelSet set : ordering.immutableSortedCopy(allSets)) {
       pw.println("Set#" + set.id
           + ", type: " + set.subsets.get(0).getRowType());
       int j = -1;

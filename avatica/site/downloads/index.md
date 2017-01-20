@@ -38,10 +38,6 @@ Release          | Date       | Commit   | Download
 {% endcomment %}{% capture p %}http://www.apache.org/dyn/closer.lua?filename=calcite/{{ v }}{% endcapture %}{% comment %}
 {% endcomment %}{% assign q = "&action=download" %}{% comment %}
 {% endcomment %}{% assign d = "https://www.apache.org/dist" %}{% comment %}
-{% endcomment %}{% elsif forloop.rindex < 8 %}{% comment %}
-{% endcomment %}{% capture p %}http://archive.apache.org/dist/incubator/calcite/{{ v }}{% endcapture %}{% comment %}
-{% endcomment %}{% assign q = "" %}{% comment %}
-{% endcomment %}{% assign d = "https://archive.apache.org/dist/incubator" %}{% comment %}
 {% endcomment %}{% else %}{% comment %}
 {% endcomment %}{% capture p %}http://archive.apache.org/dist/calcite/{{ v }}{% endcapture %}{% comment %}
 {% endcomment %}{% assign q = "" %}{% comment %}
@@ -94,6 +90,18 @@ Add the following to the dependencies section of your `pom.xml` file:
   <dependency>
     <groupId>org.apache.calcite.avatica</groupId>
     <artifactId>avatica-server</artifactId>
+    <version>{{ current_release.version }}</version>
+  </dependency>
+</dependencies>
+{% endhighlight %}
+
+As of Apache Calcite Avatica 1.9.0, the following un-shaded client artifact is also available:
+
+{% highlight xml %}
+<dependencies>
+  <dependency>
+    <groupId>org.apache.calcite.avatica</groupId>
+    <artifactId>avatica-core</artifactId>
     <version>{{ current_release.version }}</version>
   </dependency>
 </dependencies>

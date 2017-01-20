@@ -81,6 +81,7 @@ public class Linq4jExample {
         .orderBy(Functions.<String>identitySelector())
         .toList()
         .toString();
+    System.out.println(s);
     assert s.equals("[10: Fred+Eric+Janet, 30: Bill]");
   }
 }

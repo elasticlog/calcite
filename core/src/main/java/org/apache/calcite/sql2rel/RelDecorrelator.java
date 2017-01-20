@@ -65,6 +65,7 @@ import org.apache.calcite.rex.RexShuttle;
 import org.apache.calcite.rex.RexSubQuery;
 import org.apache.calcite.rex.RexUtil;
 import org.apache.calcite.rex.RexVisitorImpl;
+import org.apache.calcite.sql.SqlExplainFormat;
 import org.apache.calcite.sql.SqlExplainLevel;
 import org.apache.calcite.sql.SqlFunction;
 import org.apache.calcite.sql.SqlKind;
@@ -202,11 +203,8 @@ public class RelDecorrelator implements ReflectiveVisitor {
 
     if (SQL2REL_LOGGER.isDebugEnabled()) {
       SQL2REL_LOGGER.debug(
-          RelOptUtil.dumpPlan(
-              "Plan after removing Correlator",
-              newRootRel,
-              false,
-              SqlExplainLevel.EXPPLAN_ATTRIBUTES));
+          RelOptUtil.dumpPlan("Plan after removing Correlator", newRootRel,
+              SqlExplainFormat.TEXT, SqlExplainLevel.EXPPLAN_ATTRIBUTES));
     }
 
     if (!decorrelator.cm.mapCorVarToCorRel.isEmpty()) {
@@ -453,7 +451,6 @@ public class RelDecorrelator implements ReflectiveVisitor {
       // If input has not been rewritten, do not rewrite this rel.
       return null;
     }
-    assert !frame.corVarOutputPos.isEmpty();
     final RelNode newInput = frame.r;
 
     // map from newInput
@@ -882,10 +879,10 @@ public class RelDecorrelator implements ReflectiveVisitor {
 
     // Replace the filter expression to reference output of the join
     // Map filter to the new filter over join
+    final RelFactories.FilterFactory factory =
+        RelFactories.DEFAULT_FILTER_FACTORY;
     RelNode newFilter =
-        RelOptUtil.createFilter(
-            frame.r,
-            decorrelateExpr(rel.getCondition()));
+        factory.createFilter(frame.r, decorrelateExpr(rel.getCondition()));
 
     // Filter does not change the input ordering.
     // Filter rel does not permute the input.
@@ -1404,11 +1401,11 @@ public class RelDecorrelator implements ReflectiveVisitor {
 
       // Construct a CASE expression to handle the null indicator.
       //
-      // This also covers the case where a left correlated subquery
+      // This also covers the case where a left correlated sub-query
       // projects fields from outer relation. Since LOJ cannot produce
       // nulls on the LHS, the projection now need to make a nullable LHS
       // reference using a nullability indicator. If this this indicator
-      // is null, it means the subquery does not produce any value. As a
+      // is null, it means the sub-query does not produce any value. As a
       // result, any RHS ref by this usbquery needs to produce null value.
 
       // WHEN indicator IS NULL
@@ -1602,7 +1599,7 @@ public class RelDecorrelator implements ReflectiveVisitor {
 
       // check projRel only projects one expression
       // check this project only projects one expression, i.e. scalar
-      // subqueries.
+      // sub-queries.
       List<RexNode> projExprs = project.getProjects();
       if (projExprs.size() != 1) {
         return;
@@ -1679,7 +1676,7 @@ public class RelDecorrelator implements ReflectiveVisitor {
       }
 
       // check this project only projects one expression, i.e. scalar
-      // subqueries.
+      // sub-queries.
       if (project.getProjects().size() != 1) {
         return;
       }
@@ -2533,12 +2530,20 @@ public class RelDecorrelator implements ReflectiveVisitor {
           final RexNode ref = fieldAccess.getReferenceExpr();
           if (ref instanceof RexCorrelVariable) {
             final RexCorrelVariable var = (RexCorrelVariable) ref;
-            final Correlation correlation =
-                new Correlation(var.id,
-                    fieldAccess.getField().getIndex(),
-                    corrIdGenerator++);
-            mapFieldAccessToCorVar.put(fieldAccess, correlation);
-            mapRefRelToCorVar.put(rel, correlation);
+            if (mapFieldAccessToCorVar.containsKey(fieldAccess)) {
+              //for cases where different Rel nodes are referring to
+              // same correlation var (e.g. in case of NOT IN)
+              // avoid generating another correlation var
+              // and record the 'rel' is using the same correlation
+              mapRefRelToCorVar.put(rel, mapFieldAccessToCorVar.get(fieldAccess));
+            } else {
+              final Correlation correlation =
+                      new Correlation(var.id,
+                              fieldAccess.getField().getIndex(),
+                              corrIdGenerator++);
+              mapFieldAccessToCorVar.put(fieldAccess, correlation);
+              mapRefRelToCorVar.put(rel, correlation);
+            }
           }
           return super.visitFieldAccess(fieldAccess);
         }

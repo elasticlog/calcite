@@ -20,7 +20,7 @@ limitations under the License.
   <parent>
     <groupId>org.apache.calcite.avatica</groupId>
     <artifactId>avatica-parent</artifactId>
-    <version>1.9.0-SNAPSHOT</version>
+    <version>1.10.0-SNAPSHOT</version>
   </parent>
   <artifactId>avatica-standalone-server</artifactId>
   <name>Avatica Standalone Server</name>
@@ -35,7 +35,7 @@ limitations under the License.
          in dependencyManagement in the root POM, not here. -->
     <dependency>
       <groupId>org.apache.calcite.avatica</groupId>
-      <artifactId>avatica</artifactId>
+      <artifactId>avatica-core</artifactId>
     </dependency>
     <dependency>
       <groupId>org.apache.calcite.avatica</groupId>
@@ -113,6 +113,7 @@ limitations under the License.
       </plugin>
       <plugin>
         <artifactId>maven-dependency-plugin</artifactId>
+        <version>${maven-dependency-plugin.version}</version>
         <executions>
           <execution>
             <id>analyze</id>
@@ -143,13 +144,6 @@ limitations under the License.
               <goal>shade</goal>
             </goals>
             <configuration>
-              <artifactSet>
-                <excludes>
-                  <exclude>com.google.protobuf:protobuf-java</exclude>
-                  <exclude>org.apache.httpcomponents:*</exclude>
-                  <exclude>commons-codec:commons-codec</exclude>
-                </excludes>
-                </artifactSet>
               <createDependencyReducedPom>false</createDependencyReducedPom>
               <relocations>
                 <relocation>
@@ -163,6 +157,10 @@ limitations under the License.
                 <relocation>
                   <pattern>com.google.common</pattern>
                   <shadedPattern>org.apache.calcite.avatica.hsqldb.shaded.com.google.common</shadedPattern>
+                </relocation>
+                <relocation>
+                  <pattern>com.google.protobuf</pattern>
+                  <shadedPattern>org.apache.calcite.avatica.hsqldb.shaded.com.google.protobuf</shadedPattern>
                 </relocation>
                 <relocation>
                   <pattern>javax.servlet</pattern>
@@ -187,6 +185,14 @@ limitations under the License.
                 <relocation>
                   <pattern>org.slf4j</pattern>
                   <shadedPattern>org.apache.calcite.avatica.hsqldb.shaded.org.slf4j</shadedPattern>
+                </relocation>
+                <relocation>
+                  <pattern>org.apache.http</pattern>
+                  <shadedPattern>org.apache.calcite.avatica.hsqldb.shaded.org.apache.http</shadedPattern>
+                </relocation>
+                <relocation>
+                  <pattern>org.apache.commons</pattern>
+                  <shadedPattern>org.apache.calcite.avatica.hsqldb.shaded.org.apache.commons</shadedPattern>
                 </relocation>
               </relocations>
               <shadedArtifactAttached>true</shadedArtifactAttached>
@@ -213,6 +219,15 @@ limitations under the License.
             </configuration>
           </execution>
         </executions>
+      </plugin>
+      <plugin>
+        <groupId>org.apache.rat</groupId>
+        <artifactId>apache-rat-plugin</artifactId>
+        <configuration>
+          <excludes>
+            <exclude>src/main/resources/META-INF/services/java.sql.Driver</exclude>
+          </excludes>
+        </configuration>
       </plugin>
     </plugins>
   </build>

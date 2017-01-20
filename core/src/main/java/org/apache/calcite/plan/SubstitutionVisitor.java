@@ -48,6 +48,7 @@ import org.apache.calcite.rex.RexLiteral;
 import org.apache.calcite.rex.RexNode;
 import org.apache.calcite.rex.RexShuttle;
 import org.apache.calcite.rex.RexUtil;
+import org.apache.calcite.runtime.PredicateImpl;
 import org.apache.calcite.sql.SqlAggFunction;
 import org.apache.calcite.sql.fun.SqlStdOperatorTable;
 import org.apache.calcite.sql.validate.SqlValidatorUtil;
@@ -1678,10 +1679,7 @@ public class SubstitutionVisitor {
         List<String> fieldNameList) {
       final RelDataType rowType =
           RexUtil.createStructType(child.cluster.getTypeFactory(), exprList,
-              fieldNameList == null
-                  ? null
-                  : SqlValidatorUtil.uniquify(fieldNameList,
-                      SqlValidatorUtil.F_SUGGESTER));
+              fieldNameList, SqlValidatorUtil.F_SUGGESTER);
       return of(rowType, child, exprList);
     }
 
@@ -2017,8 +2015,9 @@ public class SubstitutionVisitor {
         Set<CorrelationId> variablesStopped) {
       List<RelDataTypeField> fieldList = Collections.emptyList();
       RelDataType rowType =
-          Join.deriveJoinRowType(left.getRowType(), right.getRowType(),
-              joinType, cluster.getTypeFactory(), null, fieldList);
+          SqlValidatorUtil.deriveJoinRowType(left.getRowType(),
+              right.getRowType(), joinType, cluster.getTypeFactory(), null,
+              fieldList);
       return new MutableJoin(rowType, left, right, condition, joinType,
           variablesStopped);
     }
@@ -2394,8 +2393,8 @@ public class SubstitutionVisitor {
    */
   public static class FilterOnProjectRule extends RelOptRule {
     private static final Predicate<LogicalFilter> PREDICATE =
-        new Predicate<LogicalFilter>() {
-          public boolean apply(LogicalFilter input) {
+        new PredicateImpl<LogicalFilter>() {
+          public boolean test(LogicalFilter input) {
             return input.getCondition() instanceof RexInputRef;
           }
         };

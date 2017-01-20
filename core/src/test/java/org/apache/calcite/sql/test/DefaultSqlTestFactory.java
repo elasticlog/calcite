@@ -16,16 +16,17 @@
  */
 package org.apache.calcite.sql.test;
 
+import org.apache.calcite.adapter.java.JavaTypeFactory;
 import org.apache.calcite.avatica.util.Casing;
 import org.apache.calcite.avatica.util.Quoting;
-import org.apache.calcite.rel.type.RelDataTypeFactory;
+import org.apache.calcite.jdbc.JavaTypeFactoryImpl;
 import org.apache.calcite.rel.type.RelDataTypeSystem;
 import org.apache.calcite.sql.SqlOperatorTable;
 import org.apache.calcite.sql.advise.SqlAdvisor;
 import org.apache.calcite.sql.fun.SqlStdOperatorTable;
 import org.apache.calcite.sql.parser.SqlParser;
-import org.apache.calcite.sql.type.SqlTypeFactoryImpl;
 import org.apache.calcite.sql.validate.SqlConformance;
+import org.apache.calcite.sql.validate.SqlConformanceEnum;
 import org.apache.calcite.sql.validate.SqlValidator;
 import org.apache.calcite.sql.validate.SqlValidatorUtil;
 import org.apache.calcite.sql.validate.SqlValidatorWithHints;
@@ -51,7 +52,7 @@ public class DefaultSqlTestFactory implements SqlTestFactory {
           .put("quotedCasing", Casing.UNCHANGED)
           .put("unquotedCasing", Casing.TO_UPPER)
           .put("caseSensitive", true)
-          .put("conformance", SqlConformance.DEFAULT)
+          .put("conformance", SqlConformanceEnum.DEFAULT)
           .put("operatorTable", SqlStdOperatorTable.instance())
           .put("connectionFactory",
               CalciteAssert.EMPTY_CONNECTION_FACTORY
@@ -80,6 +81,7 @@ public class DefaultSqlTestFactory implements SqlTestFactory {
             .setQuoting((Quoting) factory.get("quoting"))
             .setUnquotedCasing((Casing) factory.get("unquotedCasing"))
             .setQuotedCasing((Casing) factory.get("quotedCasing"))
+            .setConformance((SqlConformance) factory.get("conformance"))
             .build());
   }
 
@@ -88,8 +90,8 @@ public class DefaultSqlTestFactory implements SqlTestFactory {
     final boolean caseSensitive = (Boolean) factory.get("caseSensitive");
     final SqlConformance conformance =
         (SqlConformance) factory.get("conformance");
-    final RelDataTypeFactory typeFactory =
-        new SqlTypeFactoryImpl(RelDataTypeSystem.DEFAULT);
+    final JavaTypeFactory typeFactory =
+        new JavaTypeFactoryImpl(RelDataTypeSystem.DEFAULT);
     return SqlValidatorUtil.newValidator(operatorTable,
         new MockCatalogReader(typeFactory, caseSensitive).init(),
         typeFactory, conformance);

@@ -29,13 +29,15 @@ import org.apache.calcite.schema.Table;
 import org.apache.calcite.schema.TranslatableTable;
 import org.apache.calcite.schema.impl.AbstractTable;
 import org.apache.calcite.sql.type.SqlTypeName;
-import org.apache.calcite.util.Util;
 
 import com.google.common.base.Preconditions;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
-import com.google.common.collect.Iterables;
+
+import org.joda.time.DateTime;
+import org.joda.time.Interval;
+import org.joda.time.chrono.ISOChronology;
 
 import java.util.List;
 import java.util.Map;
@@ -45,13 +47,17 @@ import java.util.Set;
  * Table mapped onto a Druid table.
  */
 public class DruidTable extends AbstractTable implements TranslatableTable {
-  protected static final String DEFAULT_INTERVAL =
-      "1900-01-09T00:00:00.000Z/2992-01-10T00:00:00.000Z";
+
+  public static final String DEFAULT_TIMESTAMP_COLUMN = "__time";
+  public static final Interval DEFAULT_INTERVAL =
+      new Interval(new DateTime("1900-01-01", ISOChronology.getInstanceUTC()),
+          new DateTime("3000-01-01", ISOChronology.getInstanceUTC()));
+
   final DruidSchema schema;
   final String dataSource;
   final RelProtoDataType protoRowType;
   final ImmutableSet<String> metricFieldNames;
-  final List<String> intervals;
+  final ImmutableList<Interval> intervals;
   final String timestampFieldName;
 
   /**
@@ -65,15 +71,18 @@ public class DruidTable extends AbstractTable implements TranslatableTable {
    * @param timestampFieldName Name of the column that contains the time
    */
   public DruidTable(DruidSchema schema, String dataSource,
-      RelProtoDataType protoRowType, Set<String> metricFieldNames, List<String> intervals,
-      String timestampFieldName) {
+      RelProtoDataType protoRowType, Set<String> metricFieldNames,
+      String timestampFieldName, List<Interval> intervals) {
     this.timestampFieldName = Preconditions.checkNotNull(timestampFieldName);
     this.schema = Preconditions.checkNotNull(schema);
     this.dataSource = Preconditions.checkNotNull(dataSource);
     this.protoRowType = protoRowType;
     this.metricFieldNames = ImmutableSet.copyOf(metricFieldNames);
-    this.intervals = Preconditions.checkNotNull(
-        Util.first(intervals, ImmutableList.of(DEFAULT_INTERVAL)));
+    this.intervals = intervals != null ? ImmutableList.copyOf(intervals)
+        : ImmutableList.of(DEFAULT_INTERVAL);
+    for (Interval interval : this.intervals) {
+      assert interval.getChronology() == ISOChronology.getInstanceUTC();
+    }
   }
 
   /** Creates a {@link DruidTable}
@@ -91,20 +100,17 @@ public class DruidTable extends AbstractTable implements TranslatableTable {
    * @return A table
    */
   static Table create(DruidSchema druidSchema, String dataSourceName,
-      List<String> intervals, Map<String, SqlTypeName> fieldMap,
+      List<Interval> intervals, Map<String, SqlTypeName> fieldMap,
       Set<String> metricNameSet, String timestampColumnName,
       DruidConnectionImpl connection) {
     if (connection != null) {
-      connection.metadata(dataSourceName, intervals, fieldMap, metricNameSet);
+      connection.metadata(dataSourceName, timestampColumnName, intervals, fieldMap, metricNameSet);
     }
     final ImmutableMap<String, SqlTypeName> fields =
         ImmutableMap.copyOf(fieldMap);
-    if (timestampColumnName == null) {
-      timestampColumnName = Iterables.get(fieldMap.keySet(), 0);
-    }
     return new DruidTable(druidSchema, dataSourceName,
         new MapRelProtoDataType(fields), ImmutableSet.copyOf(metricNameSet),
-        intervals, Util.first(timestampColumnName, "__time"));
+        timestampColumnName, intervals);
   }
 
   public RelDataType getRowType(RelDataTypeFactory typeFactory) {

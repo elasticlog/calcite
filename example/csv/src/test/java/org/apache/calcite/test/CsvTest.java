@@ -17,10 +17,12 @@
 package org.apache.calcite.test;
 
 import org.apache.calcite.adapter.csv.CsvSchemaFactory;
+import org.apache.calcite.adapter.csv.CsvStreamTableFactory;
 import org.apache.calcite.jdbc.CalciteConnection;
 import org.apache.calcite.linq4j.function.Function1;
 import org.apache.calcite.schema.Schema;
 import org.apache.calcite.sql2rel.SqlToRelConverter;
+import org.apache.calcite.util.Util;
 
 import com.google.common.base.Throwables;
 import com.google.common.collect.ImmutableMap;
@@ -29,7 +31,10 @@ import org.junit.Assert;
 import org.junit.Ignore;
 import org.junit.Test;
 
+import java.io.File;
+import java.io.FileWriter;
 import java.io.PrintStream;
+import java.io.PrintWriter;
 import java.net.URL;
 import java.sql.Connection;
 import java.sql.DriverManager;
@@ -40,11 +45,18 @@ import java.sql.SQLException;
 import java.sql.Statement;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Properties;
+import java.util.concurrent.ArrayBlockingQueue;
+import java.util.concurrent.BlockingQueue;
+import java.util.concurrent.Callable;
 
+import static org.hamcrest.CoreMatchers.anyOf;
 import static org.hamcrest.CoreMatchers.is;
+import static org.hamcrest.CoreMatchers.nullValue;
 import static org.junit.Assert.assertThat;
+import static org.junit.Assert.fail;
 
 /**
  * Unit test of the Calcite adapter for CSV.
@@ -67,8 +79,41 @@ public class CsvTest {
     }
   }
 
-  public static String toLinux(String s) {
-    return s.replaceAll("\r\n", "\n");
+
+  /** Quotes a string for Java or JSON. */
+  private static String escapeString(String s) {
+    return escapeString(new StringBuilder(), s).toString();
+  }
+
+  /** Quotes a string for Java or JSON, into a builder. */
+  private static StringBuilder escapeString(StringBuilder buf, String s) {
+    buf.append('"');
+    int n = s.length();
+    char lastChar = 0;
+    for (int i = 0; i < n; ++i) {
+      char c = s.charAt(i);
+      switch (c) {
+      case '\\':
+        buf.append("\\\\");
+        break;
+      case '"':
+        buf.append("\\\"");
+        break;
+      case '\n':
+        buf.append("\\n");
+        break;
+      case '\r':
+        if (lastChar != '\n') {
+          buf.append("\\r");
+        }
+        break;
+      default:
+        buf.append(c);
+        break;
+      }
+      lastChar = c;
+    }
+    return buf.append('"');
   }
 
   /**
@@ -213,7 +258,7 @@ public class CsvTest {
     checkSql("bug", "select _MAP['id'] as id,\n"
             + " _MAP['title'] as title,\n"
             + " CHAR_LENGTH(CAST(_MAP['title'] AS VARCHAR(30))) as len\n"
-            + " from \"archers\"",
+            + " from \"archers\"\n",
         "ID=19990101; TITLE=Tractor trouble.; LEN=16",
         "ID=19990103; TITLE=Charlie's surprise.; LEN=19");
   }
@@ -302,7 +347,7 @@ public class CsvTest {
             .append(resultSet.getString(i));
         sep = "; ";
       }
-      result.add(toLinux(buf.toString()));
+      result.add(Util.toLinux(buf.toString()));
     }
   }
 
@@ -363,12 +408,11 @@ public class CsvTest {
     final String sql = "SELECT e.name\n"
         + "FROM emps AS e\n"
         + "WHERE cast(e.empno as bigint) in ";
-    checkSql(sql + range(130, SqlToRelConverter.IN_SUBQUERY_THRESHOLD - 5),
-        "smart", expect("NAME=Alice"));
-    checkSql(sql + range(130, SqlToRelConverter.IN_SUBQUERY_THRESHOLD),
-        "smart", expect("NAME=Alice"));
-    checkSql(sql + range(130, SqlToRelConverter.IN_SUBQUERY_THRESHOLD + 1000),
-        "smart", expect("NAME=Alice"));
+    final int threshold = SqlToRelConverter.DEFAULT_IN_SUB_QUERY_THRESHOLD;
+    checkSql(sql + range(130, threshold - 5), "smart", expect("NAME=Alice"));
+    checkSql(sql + range(130, threshold), "smart", expect("NAME=Alice"));
+    checkSql(sql + range(130, threshold + 1000), "smart",
+        expect("NAME=Alice"));
   }
 
   /** Test case for
@@ -378,7 +422,7 @@ public class CsvTest {
     final String sql = "SELECT e.name\n"
         + "FROM emps AS e\n"
         + "WHERE e.empno in "
-        + range(130, SqlToRelConverter.IN_SUBQUERY_THRESHOLD);
+        + range(130, SqlToRelConverter.DEFAULT_IN_SUB_QUERY_THRESHOLD);
     checkSql(sql, "smart", expect("NAME=Alice"));
   }
 
@@ -488,7 +532,7 @@ public class CsvTest {
           CalciteConnection.class);
 
       final Schema schema =
-          new CsvSchemaFactory()
+          CsvSchemaFactory.INSTANCE
               .create(calciteConnection.getRootSchema(), null,
                   ImmutableMap.<String, Object>of("directory",
                       resourcePath("sales"), "flavor", "scannable"));
@@ -501,6 +545,159 @@ public class CsvTest {
       final ResultSet resultSet1 = statement2.executeQuery();
       Function1<ResultSet, Void> expect = expect("DEPTNO=10; NAME=Sales");
       expect.apply(resultSet1);
+    }
+  }
+
+  @Test(timeout = 10000) public void testCsvStream() throws Exception {
+    final File file = File.createTempFile("stream", "csv");
+    final String model = "{\n"
+        + "  version: '1.0',\n"
+        + "  defaultSchema: 'STREAM',\n"
+        + "  schemas: [\n"
+        + "    {\n"
+        + "      name: 'SS',\n"
+        + "      tables: [\n"
+        + "        {\n"
+        + "          name: 'DEPTS',\n"
+        + "          type: 'custom',\n"
+        + "          factory: '" + CsvStreamTableFactory.class.getName()
+        + "',\n"
+        + "          stream: {\n"
+        + "            stream: true\n"
+        + "          },\n"
+        + "          operand: {\n"
+        + "            file: " + escapeString(file.getAbsolutePath()) + ",\n"
+        + "            flavor: \"scannable\"\n"
+        + "          }\n"
+        + "        }\n"
+        + "      ]\n"
+        + "    }\n"
+        + "  ]\n"
+        + "}\n";
+    final String[] strings = {
+      "DEPTNO:int,NAME:string",
+      "10,\"Sales\"",
+      "20,\"Marketing\"",
+      "30,\"Engineering\""
+    };
+
+    try (final Connection connection =
+             DriverManager.getConnection("jdbc:calcite:model=inline:" + model);
+         final PrintWriter pw = new PrintWriter(new FileWriter(file));
+         final Worker<Void> worker = new Worker<>()) {
+      final Thread thread = new Thread(worker);
+      thread.start();
+
+      // Add some rows so that the table can deduce its row type.
+      final Iterator<String> lines = Arrays.asList(strings).iterator();
+      pw.println(lines.next()); // header
+      pw.flush();
+      worker.queue.put(writeLine(pw, lines.next())); // first row
+      worker.queue.put(writeLine(pw, lines.next())); // second row
+      final CalciteConnection calciteConnection =
+          connection.unwrap(CalciteConnection.class);
+      final String sql = "select stream * from \"SS\".\"DEPTS\"";
+      final PreparedStatement statement =
+          calciteConnection.prepareStatement(sql);
+      final ResultSet resultSet = statement.executeQuery();
+      int count = 0;
+      try {
+        while (resultSet.next()) {
+          ++count;
+          if (lines.hasNext()) {
+            worker.queue.put(sleep(10));
+            worker.queue.put(writeLine(pw, lines.next()));
+          } else {
+            worker.queue.put(cancel(statement));
+          }
+        }
+        fail("expected exception, got end of data");
+      } catch (SQLException e) {
+        assertThat(e.getMessage(), is("Statement canceled"));
+      }
+      assertThat(count, anyOf(is(strings.length - 2), is(strings.length - 1)));
+      assertThat(worker.e, nullValue());
+      assertThat(worker.v, nullValue());
+    } finally {
+      Util.discard(file.delete());
+    }
+  }
+
+  /** Creates a command that appends a line to the CSV file. */
+  private Callable<Void> writeLine(final PrintWriter pw, final String line) {
+    return new Callable<Void>() {
+      @Override public Void call() throws Exception {
+        pw.println(line);
+        pw.flush();
+        return null;
+      }
+    };
+  }
+
+  /** Creates a command that sleeps. */
+  private Callable<Void> sleep(final long millis) {
+    return new Callable<Void>() {
+      @Override public Void call() throws Exception {
+        Thread.sleep(millis);
+        return null;
+      }
+    };
+  }
+
+  /** Creates a command that cancels a statement. */
+  private Callable<Void> cancel(final Statement statement) {
+    return new Callable<Void>() {
+      @Override public Void call() throws Exception {
+        statement.cancel();
+        return null;
+      }
+    };
+  }
+
+  /** Receives commands on a queue and executes them on its own thread.
+   * Call {@link #close} to terminate.
+   *
+   * @param <E> Result value of commands
+   */
+  private static class Worker<E> implements Runnable, AutoCloseable {
+    /** Queue of commands. */
+    final BlockingQueue<Callable<E>> queue =
+        new ArrayBlockingQueue<>(5);
+
+    /** Value returned by the most recent command. */
+    private E v;
+
+    /** Exception thrown by a command or queue wait. */
+    private Exception e;
+
+    /** The poison pill command. */
+    final Callable<E> end =
+        new Callable<E>() {
+          public E call() {
+            return null;
+          }
+        };
+
+    public void run() {
+      try {
+        for (;;) {
+          final Callable<E> c = queue.take();
+          if (c == end) {
+            return;
+          }
+          this.v = c.call();
+        }
+      } catch (Exception e) {
+        this.e = e;
+      }
+    }
+
+    public void close() {
+      try {
+        queue.put(end);
+      } catch (InterruptedException e) {
+        // ignore
+      }
     }
   }
 }

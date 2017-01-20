@@ -68,6 +68,7 @@ import org.apache.calcite.runtime.BinarySearch;
 import org.apache.calcite.runtime.Bindable;
 import org.apache.calcite.runtime.Enumerables;
 import org.apache.calcite.runtime.FlatLists;
+import org.apache.calcite.runtime.RandomFunction;
 import org.apache.calcite.runtime.ResultSetEnumerable;
 import org.apache.calcite.runtime.SortedMultiMap;
 import org.apache.calcite.runtime.SqlFunctions;
@@ -115,6 +116,7 @@ public enum BuiltInMethod {
   AS_QUERYABLE(Enumerable.class, "asQueryable"),
   ABSTRACT_ENUMERABLE_CTOR(AbstractEnumerable.class),
   INTO(ExtendedEnumerable.class, "into", Collection.class),
+  REMOVE_ALL(ExtendedEnumerable.class, "removeAll", Collection.class),
   SCHEMA_GET_SUB_SCHEMA(Schema.class, "getSubSchema", String.class),
   SCHEMA_GET_TABLE(Schema.class, "getTable", String.class),
   SCHEMA_PLUS_UNWRAP(SchemaPlus.class, "unwrap", Class.class),
@@ -237,9 +239,9 @@ public enum BuiltInMethod {
       Object.class, int.class, int.class, Function1.class, Comparator.class),
   BINARY_SEARCH6_UPPER(BinarySearch.class, "upperBound", Object[].class,
       Object.class, int.class, int.class, Function1.class, Comparator.class),
-  ARRAY_ITEM(SqlFunctions.class, "arrayItem", List.class, int.class),
-  MAP_ITEM(SqlFunctions.class, "mapItem", Map.class, Object.class),
-  ANY_ITEM(SqlFunctions.class, "item", Object.class, Object.class),
+  ARRAY_ITEM(SqlFunctions.class, "arrayItemOptional", List.class, int.class),
+  MAP_ITEM(SqlFunctions.class, "mapItemOptional", Map.class, Object.class),
+  ANY_ITEM(SqlFunctions.class, "itemOptional", Object.class, Object.class),
   UPPER(SqlFunctions.class, "upper", String.class),
   LOWER(SqlFunctions.class, "lower", String.class),
   INITCAP(SqlFunctions.class, "initcap", String.class),
@@ -249,15 +251,25 @@ public enum BuiltInMethod {
   STRING_CONCAT(SqlFunctions.class, "concat", String.class, String.class),
   FLOOR_DIV(DateTimeUtils.class, "floorDiv", long.class, long.class),
   FLOOR_MOD(DateTimeUtils.class, "floorMod", long.class, long.class),
+  ADD_MONTHS(SqlFunctions.class, "addMonths", long.class, int.class),
+  SUBTRACT_MONTHS(SqlFunctions.class, "subtractMonths", long.class,
+      long.class),
   FLOOR(SqlFunctions.class, "floor", int.class, int.class),
   CEIL(SqlFunctions.class, "ceil", int.class, int.class),
   OVERLAY(SqlFunctions.class, "overlay", String.class, String.class, int.class),
   OVERLAY3(SqlFunctions.class, "overlay", String.class, String.class, int.class,
       int.class),
   POSITION(SqlFunctions.class, "position", String.class, String.class),
+  RAND(RandomFunction.class, "rand"),
+  RAND_SEED(RandomFunction.class, "randSeed", int.class),
+  RAND_INTEGER(RandomFunction.class, "randInteger", int.class),
+  RAND_INTEGER_SEED(RandomFunction.class, "randIntegerSeed", int.class,
+      int.class),
   TRUNCATE(SqlFunctions.class, "truncate", String.class, int.class),
   TRUNCATE_OR_PAD(SqlFunctions.class, "truncateOrPad", String.class, int.class),
   TRIM(SqlFunctions.class, "trim", boolean.class, boolean.class, String.class,
+      String.class),
+  REPLACE(SqlFunctions.class, "replace", String.class, String.class,
       String.class),
   TRANSLATE3(SqlFunctions.class, "translate3", String.class, String.class, String.class),
   LTRIM(SqlFunctions.class, "ltrim", String.class),

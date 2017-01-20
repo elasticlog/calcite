@@ -92,6 +92,18 @@ public class ConnectionConfigImpl implements ConnectionConfig {
     return keytab;
   }
 
+  public File truststore() {
+    String filename = BuiltInConnectionProperty.TRUSTSTORE.wrap(properties).getString();
+    if (null == filename) {
+      return null;
+    }
+    return new File(filename);
+  }
+
+  public String truststorePassword() {
+    return BuiltInConnectionProperty.TRUSTSTORE_PASSWORD.wrap(properties).getString();
+  }
+
   /** Converts a {@link Properties} object containing (name, value)
    * pairs into a map whose keys are
    * {@link org.apache.calcite.avatica.InternalProperty} objects.
@@ -137,6 +149,14 @@ public class ConnectionConfigImpl implements ConnectionConfig {
         return converter.apply(property, s);
       }
       return converter.apply(property, defaultValue);
+    }
+
+    private <T> T getDefaultNull(Converter<T> converter) {
+      final String s = map.get(property);
+      if (s != null) {
+        return converter.apply(property, s);
+      }
+      return null;
     }
 
     /** Returns the string value of this property, or null if not specified and
@@ -214,9 +234,18 @@ public class ConnectionConfigImpl implements ConnectionConfig {
     /** Returns the enum value of this property. Throws if not set and no
      * default. */
     public <E extends Enum<E>> E getEnum(Class<E> enumClass, E defaultValue) {
-      assert property.type() == ConnectionProperty.Type.ENUM;
-      //noinspection unchecked
-      return get_(enumConverter(enumClass), defaultValue.name());
+      if (property.type() != ConnectionProperty.Type.ENUM) {
+        throw new AssertionError("not an enum");
+      }
+      if (enumClass != property.valueClass()) {
+        throw new AssertionError("wrong value class; expected "
+            + property.valueClass());
+      }
+      if (defaultValue == null) {
+        return getDefaultNull(enumConverter(enumClass));
+      } else {
+        return get_(enumConverter(enumClass), defaultValue.name());
+      }
     }
 
     /** Returns an instance of a plugin.
@@ -308,6 +337,12 @@ public class ConnectionConfigImpl implements ConnectionConfig {
         try {
           return (E) Enum.valueOf(enumClass, s);
         } catch (IllegalArgumentException e) {
+          // Case insensitive match is OK too.
+          for (E c : enumClass.getEnumConstants()) {
+            if (c.name().equalsIgnoreCase(s)) {
+              return c;
+            }
+          }
           throw new RuntimeException("Property '" + s + "' not valid for enum "
               + enumClass.getName());
         }

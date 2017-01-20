@@ -20,10 +20,10 @@ limitations under the License.
   <parent>
     <groupId>org.apache.calcite.avatica</groupId>
     <artifactId>avatica-parent</artifactId>
-    <version>1.9.0-SNAPSHOT</version>
+    <version>1.10.0-SNAPSHOT</version>
   </parent>
 
-  <artifactId>avatica</artifactId>
+  <artifactId>avatica-core</artifactId>
   <packaging>jar</packaging>
   <name>Apache Calcite Avatica</name>
   <description>JDBC driver framework.</description>
@@ -79,7 +79,7 @@ limitations under the License.
     </dependency>
     <dependency>
       <groupId>org.mockito</groupId>
-      <artifactId>mockito-all</artifactId>
+      <artifactId>mockito-core</artifactId>
       <scope>test</scope>
     </dependency>
     <dependency>
@@ -210,43 +210,27 @@ limitations under the License.
         </executions>
       </plugin>
       <plugin>
-        <groupId>org.apache.maven.plugins</groupId>
-        <artifactId>maven-shade-plugin</artifactId>
+        <groupId>org.xolstice.maven.plugins</groupId>
+        <artifactId>protobuf-maven-plugin</artifactId>
         <executions>
           <execution>
-            <phase>package</phase>
+            <id>compile-protoc</id>
+            <phase>generate-sources</phase>
             <goals>
-              <goal>shade</goal>
+              <goal>compile</goal>
             </goals>
-            <configuration>
-              <relocations>
-                <relocation>
-                  <pattern>com.google.protobuf</pattern>
-                  <shadedPattern>org.apache.calcite.avatica.com.google.protobuf</shadedPattern>
-                </relocation>
-                <relocation>
-                  <pattern>org.apache.http</pattern>
-                  <shadedPattern>org.apache.calcite.avatica.org.apache.http</shadedPattern>
-                </relocation>
-                <relocation>
-                  <pattern>org.apache.commons</pattern>
-                  <shadedPattern>org.apache.calcite.avatica.org.apache.commons</shadedPattern>
-                </relocation>
-              </relocations>
-              <createDependencyReducedPom>false</createDependencyReducedPom>
-              <transformers>
-                <transformer implementation="org.apache.maven.plugins.shade.resource.ApacheNoticeResourceTransformer">
-                    <addHeader>false</addHeader>
-                </transformer>
-                <transformer implementation="org.apache.maven.plugins.shade.resource.DontIncludeResourceTransformer">
-                  <resources>
-                    <resource>LICENSE.txt</resource>
-                  </resources>
-                </transformer>
-              </transformers>
-            </configuration>
           </execution>
         </executions>
+      </plugin>
+      <plugin>
+        <groupId>org.apache.rat</groupId>
+        <artifactId>apache-rat-plugin</artifactId>
+        <configuration>
+          <excludes>
+            <exclude>src/main/java/org/apache/calcite/avatica/proto/*.java</exclude>
+            <exclude>src/main/resources/META-INF/services/java.sql.Driver</exclude>
+          </excludes>
+        </configuration>
       </plugin>
     </plugins>
   </build>

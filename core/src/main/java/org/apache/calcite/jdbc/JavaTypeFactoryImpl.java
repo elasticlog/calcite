@@ -22,6 +22,7 @@ import org.apache.calcite.linq4j.Ord;
 import org.apache.calcite.linq4j.tree.Primitive;
 import org.apache.calcite.linq4j.tree.Types;
 import org.apache.calcite.rel.type.RelDataType;
+import org.apache.calcite.rel.type.RelDataTypeFactory;
 import org.apache.calcite.rel.type.RelDataTypeField;
 import org.apache.calcite.rel.type.RelDataTypeFieldImpl;
 import org.apache.calcite.rel.type.RelDataTypeSystem;
@@ -176,11 +177,22 @@ public class JavaTypeFactoryImpl
       case DATE:
       case TIME:
       case INTEGER:
+      case INTERVAL_YEAR:
       case INTERVAL_YEAR_MONTH:
+      case INTERVAL_MONTH:
         return type.isNullable() ? Integer.class : int.class;
       case TIMESTAMP:
       case BIGINT:
-      case INTERVAL_DAY_TIME:
+      case INTERVAL_DAY:
+      case INTERVAL_DAY_HOUR:
+      case INTERVAL_DAY_MINUTE:
+      case INTERVAL_DAY_SECOND:
+      case INTERVAL_HOUR:
+      case INTERVAL_HOUR_MINUTE:
+      case INTERVAL_HOUR_SECOND:
+      case INTERVAL_MINUTE:
+      case INTERVAL_MINUTE_SECOND:
+      case INTERVAL_SECOND:
         return type.isNullable() ? Long.class : long.class;
       case SMALLINT:
         return type.isNullable() ? Short.class : short.class;
@@ -222,19 +234,25 @@ public class JavaTypeFactoryImpl
   }
 
   public RelDataType toSql(RelDataType type) {
+    return toSql(this, type);
+  }
+
+  /** Converts a type in Java format to a SQL-oriented type. */
+  public static RelDataType toSql(final RelDataTypeFactory typeFactory,
+      RelDataType type) {
     if (type instanceof RelRecordType) {
-      return createStructType(
+      return typeFactory.createStructType(
           Lists.transform(type.getFieldList(),
               new Function<RelDataTypeField, RelDataType>() {
                 public RelDataType apply(RelDataTypeField a0) {
-                  return toSql(a0.getType());
+                  return toSql(typeFactory, a0.getType());
                 }
               }),
           type.getFieldNames());
     }
     if (type instanceof JavaType) {
-      return createTypeWithNullability(
-          createSqlType(type.getSqlTypeName()),
+      return typeFactory.createTypeWithNullability(
+          typeFactory.createSqlType(type.getSqlTypeName()),
           type.isNullable());
     }
     return type;

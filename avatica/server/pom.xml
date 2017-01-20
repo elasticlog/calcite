@@ -20,7 +20,7 @@ limitations under the License.
   <parent>
     <groupId>org.apache.calcite.avatica</groupId>
     <artifactId>avatica-parent</artifactId>
-    <version>1.9.0-SNAPSHOT</version>
+    <version>1.10.0-SNAPSHOT</version>
   </parent>
 
   <artifactId>avatica-server</artifactId>
@@ -37,7 +37,11 @@ limitations under the License.
          in dependencyManagement in the root POM, not here. -->
     <dependency>
       <groupId>org.apache.calcite.avatica</groupId>
-      <artifactId>avatica</artifactId>
+      <artifactId>avatica-core</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>org.apache.calcite.avatica</groupId>
+      <artifactId>avatica-metrics</artifactId>
     </dependency>
     <dependency>
       <groupId>javax.servlet</groupId>
@@ -67,8 +71,13 @@ limitations under the License.
     <!-- test dependencies -->
     <dependency>
       <groupId>org.apache.calcite.avatica</groupId>
-      <artifactId>avatica</artifactId>
+      <artifactId>avatica-core</artifactId>
       <type>test-jar</type>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>com.fasterxml.jackson.core</groupId>
+      <artifactId>jackson-databind</artifactId>
       <scope>test</scope>
     </dependency>
     <dependency>
@@ -110,7 +119,7 @@ limitations under the License.
     </dependency>
     <dependency>
       <groupId>org.mockito</groupId>
-      <artifactId>mockito-all</artifactId>
+      <artifactId>mockito-core</artifactId>
       <scope>test</scope>
     </dependency>
     <dependency>
@@ -121,6 +130,16 @@ limitations under the License.
     <dependency>
       <groupId>org.slf4j</groupId>
       <artifactId>slf4j-log4j12</artifactId>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.bouncycastle</groupId>
+      <artifactId>bcpkix-jdk15on</artifactId>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.bouncycastle</groupId>
+      <artifactId>bcprov-jdk15on</artifactId>
       <scope>test</scope>
     </dependency>
   </dependencies>
@@ -176,6 +195,7 @@ limitations under the License.
       <plugin>
         <groupId>org.apache.maven.plugins</groupId>
         <artifactId>maven-dependency-plugin</artifactId>
+        <version>${maven-dependency-plugin.version}</version>
         <!-- configurations do not cascade, so all of the definition from
              ../pom.xml:build:plugin-management:plugins:plugin must be repeated in child poms -->
         <executions>

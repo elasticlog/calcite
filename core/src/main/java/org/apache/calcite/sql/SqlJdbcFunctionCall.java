@@ -383,7 +383,7 @@ public class SqlJdbcFunctionCall extends SqlFunction {
 
   /** List of all system function names defined by JDBC. */
   private static final String SYSTEM_FUNCTIONS = constructFuncList(
-      "DATABASE", "IFNULL", "USER");
+      "CONVERT", "DATABASE", "IFNULL", "USER");
 
   //~ Instance fields --------------------------------------------------------
 
@@ -656,11 +656,30 @@ public class SqlJdbcFunctionCall extends SqlFunction {
       // See also SqlOperatorTests.testJdbcFn, which contains the list.
       ImmutableMap.Builder<String, MakeCall> map = ImmutableMap.builder();
       map.put("ABS", simple(SqlStdOperatorTable.ABS));
+      map.put("ACOS", simple(SqlStdOperatorTable.ACOS));
+      map.put("ASIN", simple(SqlStdOperatorTable.ASIN));
+      map.put("ATAN", simple(SqlStdOperatorTable.ATAN));
+      map.put("ATAN2", simple(SqlStdOperatorTable.ATAN2));
+      map.put("CEILING", simple(SqlStdOperatorTable.CEIL));
+      map.put("COS", simple(SqlStdOperatorTable.COS));
+      map.put("COT", simple(SqlStdOperatorTable.COT));
+      map.put("DEGREES", simple(SqlStdOperatorTable.DEGREES));
       map.put("EXP", simple(SqlStdOperatorTable.EXP));
+      map.put("FLOOR", simple(SqlStdOperatorTable.FLOOR));
       map.put("LOG", simple(SqlStdOperatorTable.LN));
       map.put("LOG10", simple(SqlStdOperatorTable.LOG10));
       map.put("MOD", simple(SqlStdOperatorTable.MOD));
+      map.put("PI", simple(SqlStdOperatorTable.PI));
       map.put("POWER", simple(SqlStdOperatorTable.POWER));
+      map.put("RADIANS", simple(SqlStdOperatorTable.RADIANS));
+      map.put("RAND", simple(SqlStdOperatorTable.RAND));
+      map.put("ROUND", simple(SqlStdOperatorTable.ROUND));
+      map.put("SIGN", simple(SqlStdOperatorTable.SIGN));
+      map.put("SIN", simple(SqlStdOperatorTable.SIN));
+      map.put("SQRT", simple(SqlStdOperatorTable.SQRT));
+      map.put("TAN", simple(SqlStdOperatorTable.TAN));
+      map.put("TRUNCATE", simple(SqlStdOperatorTable.TRUNCATE));
+
       map.put("CONCAT", simple(SqlStdOperatorTable.CONCAT));
       map.put("INSERT",
           new PermutingMakeCall(SqlStdOperatorTable.OVERLAY, new int[]{0, 2, 3, 1}));
@@ -674,7 +693,7 @@ public class SqlJdbcFunctionCall extends SqlFunction {
               assert 1 == operands.length;
               return super.createCall(pos,
                   SqlTrimFunction.Flag.LEADING.symbol(SqlParserPos.ZERO),
-                  SqlLiteral.createCharString(" ", null),
+                  SqlLiteral.createCharString(" ", SqlParserPos.ZERO),
                   operands[0]);
             }
           });
@@ -686,17 +705,32 @@ public class SqlJdbcFunctionCall extends SqlFunction {
               assert 1 == operands.length;
               return super.createCall(pos,
                   SqlTrimFunction.Flag.TRAILING.symbol(SqlParserPos.ZERO),
-                  SqlLiteral.createCharString(" ", null),
+                  SqlLiteral.createCharString(" ", SqlParserPos.ZERO),
                   operands[0]);
             }
           });
       map.put("SUBSTRING", simple(SqlStdOperatorTable.SUBSTRING));
+      map.put("REPLACE", simple(SqlStdOperatorTable.REPLACE));
       map.put("UCASE", simple(SqlStdOperatorTable.UPPER));
       map.put("CURDATE", simple(SqlStdOperatorTable.CURRENT_DATE));
       map.put("CURTIME", simple(SqlStdOperatorTable.LOCALTIME));
       map.put("NOW", simple(SqlStdOperatorTable.CURRENT_TIMESTAMP));
       map.put("TIMESTAMPADD", simple(SqlStdOperatorTable.TIMESTAMP_ADD));
       map.put("TIMESTAMPDIFF", simple(SqlStdOperatorTable.TIMESTAMP_DIFF));
+      map.put("CONVERT",
+          new SimpleMakeCall(SqlStdOperatorTable.CAST) {
+            @Override public SqlCall createCall(SqlParserPos pos,
+                SqlNode... operands) {
+              assert 2 == operands.length;
+              SqlNode typeOperand = operands[1];
+              assert typeOperand.getKind() == SqlKind.LITERAL;
+
+              SqlJdbcDataTypeName jdbcType = ((SqlLiteral) typeOperand)
+                  .symbolValue(SqlJdbcDataTypeName.class);
+
+              return super.createCall(pos, operands[0], jdbcType.createDataType(typeOperand.pos));
+            }
+          });
       this.map = map.build();
     }
 

@@ -18,7 +18,6 @@ package org.apache.calcite.sql.validate;
 
 import org.apache.calcite.sql.SqlCall;
 import org.apache.calcite.sql.SqlFunction;
-import org.apache.calcite.sql.SqlFunctionCategory;
 import org.apache.calcite.sql.SqlKind;
 import org.apache.calcite.sql.SqlNode;
 import org.apache.calcite.sql.SqlOperator;
@@ -101,26 +100,27 @@ class AggFinder extends SqlBasicVisitor<Void> {
   public Void visit(SqlCall call) {
     final SqlOperator operator = call.getOperator();
     // If nested aggregates disallowed or found an aggregate at invalid level
-    if (operator.isAggregator()) {
+    if (operator.isAggregator() && !operator.requiresOver()) {
       if (delegate != null) {
-        return call.getOperator().acceptCall(delegate, call);
+        return operator.acceptCall(delegate, call);
       }
       if (aggregate) {
         throw new Util.FoundOne(call);
       }
     }
     // User-defined function may not be resolved yet.
-    if (operator instanceof SqlFunction
-        && ((SqlFunction) operator).getFunctionType()
-        == SqlFunctionCategory.USER_DEFINED_FUNCTION) {
-      final List<SqlOperator> list = Lists.newArrayList();
-      opTab.lookupOperatorOverloads(((SqlFunction) operator).getSqlIdentifier(),
-          SqlFunctionCategory.USER_DEFINED_FUNCTION, SqlSyntax.FUNCTION, list);
-      for (SqlOperator sqlOperator : list) {
-        if (sqlOperator.isAggregator()) {
-          // If nested aggregates disallowed or found aggregate at invalid level
-          if (aggregate) {
-            throw new Util.FoundOne(call);
+    if (operator instanceof SqlFunction) {
+      final SqlFunction sqlFunction = (SqlFunction) operator;
+      if (sqlFunction.getFunctionType().isUserDefinedNotSpecificFunction()) {
+        final List<SqlOperator> list = Lists.newArrayList();
+        opTab.lookupOperatorOverloads(sqlFunction.getSqlIdentifier(),
+            sqlFunction.getFunctionType(), SqlSyntax.FUNCTION, list);
+        for (SqlOperator operator2 : list) {
+          if (operator2.isAggregator() && !operator2.requiresOver()) {
+            // If nested aggregates disallowed or found aggregate at invalid level
+            if (aggregate) {
+              throw new Util.FoundOne(call);
+            }
           }
         }
       }

@@ -20,19 +20,19 @@ limitations under the License.
   <parent>
     <groupId>org.apache</groupId>
     <artifactId>apache</artifactId>
-    <version>17</version>
+    <version>18</version>
   </parent>
 
   <!-- The basics. -->
   <groupId>org.apache.calcite</groupId>
   <artifactId>calcite</artifactId>
   <packaging>pom</packaging>
-  <version>1.8.0</version>
+  <version>1.12.0-SNAPSHOT</version>
 
   <!-- More project information. -->
   <name>Calcite</name>
   <description>Calcite is a dynamic data management framework</description>
-  <url>http://calcite.apache.org</url>
+  <url>https://calcite.apache.org</url>
   <inceptionYear>2012</inceptionYear>
 
   <mailingLists>
@@ -41,7 +41,7 @@ limitations under the License.
       <subscribe>dev-subscribe@calcite.apache.org</subscribe>
       <unsubscribe>dev-unsubscribe@calcite.apache.org</unsubscribe>
       <post>dev@calcite.apache.org</post>
-      <archive>http://mail-archives.apache.org/mod_mbox/calcite-dev</archive>
+      <archive>https://mail-archives.apache.org/mod_mbox/calcite-dev</archive>
     </mailingList>
   </mailingLists>
 
@@ -49,30 +49,30 @@ limitations under the License.
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
     <top.dir>${project.basedir}</top.dir>
     <version.major>1</version.major>
-    <version.minor>8</version.minor>
+    <version.minor>11</version.minor>
 
     <!-- This list is in alphabetical order. -->
     <airlift-tpch.version>0.1</airlift-tpch.version>
-    <avatica.version>1.8.0</avatica.version>
+    <avatica.version>1.9.0</avatica.version>
     <build-helper-maven-plugin.version>1.9</build-helper-maven-plugin.version>
     <cassandra-driver-core.version>3.0.0</cassandra-driver-core.version>
     <checksum-maven-plugin.version>1.2</checksum-maven-plugin.version>
     <commons-dbcp.version>1.4</commons-dbcp.version>
     <commons-lang3.version>3.2</commons-lang3.version>
     <commons-logging.version>1.1.3</commons-logging.version>
-    <eigenbase-properties.version>1.1.5</eigenbase-properties.version>
     <elasticsearch-java-driver.version>2.3.2</elasticsearch-java-driver.version>
-    <findbugs.version>1.3.9</findbugs.version>
+    <findbugs.version>3.0.1</findbugs.version>
     <fmpp-maven-plugin.version>1.0</fmpp-maven-plugin.version>
     <foodmart-data-hsqldb.version>0.3</foodmart-data-hsqldb.version>
     <foodmart-queries.version>0.4.1</foodmart-queries.version>
-    <freemarker.version>2.3.19</freemarker.version>
+    <freemarker.version>2.3.25-incubating</freemarker.version>
     <git-commit-id-plugin.version>2.1.9</git-commit-id-plugin.version>
 
     <!-- We support (and test against) Guava versions between
-         12.0.1 (HDFS, HBase) and 19.0 (most recent).
+         14.0.1 (Hive) and 21.0 (most recent; supports only JDK8 and up).
          Override with your preferred version and it should work. -->
-    <guava.version>18.0</guava.version>
+    <guava.version>20.0</guava.version>
+    <joda.version>2.8.1</joda.version>
     <h2.version>1.4.185</h2.version>
     <hadoop.version>2.6.0</hadoop.version>
     <hamcrest.version>1.3</hamcrest.version>
@@ -80,7 +80,7 @@ limitations under the License.
     <hsqldb.version>2.3.1</hsqldb.version>
     <httpclient.version>4.5.2</httpclient.version>
     <httpcore.version>4.4.4</httpcore.version>
-    <hydromatic-resource.version>0.5.1</hydromatic-resource.version>
+    <hydromatic-resource.version>0.6</hydromatic-resource.version>
     <hydromatic-toolbox.version>0.3</hydromatic-toolbox.version>
     <hydromatic-tpcds.version>0.4</hydromatic-tpcds.version>
     <jackson.version>2.6.3</jackson.version>
@@ -89,31 +89,28 @@ limitations under the License.
     <javacc-maven-plugin.version>2.4</javacc-maven-plugin.version>
     <jcip-annotations.version>1.0-1</jcip-annotations.version>
     <jetty.version>9.2.15.v20160210</jetty.version>
-    <jmh.version>1.11.2</jmh.version>
+    <jmh.version>1.12</jmh.version>
     <junit.version>4.12</junit.version>
     <maven-checkstyle-plugin.version>2.12.1</maven-checkstyle-plugin.version>
     <maven-dependency-plugin.version>2.10</maven-dependency-plugin.version>
-
-    <!-- keep failsafe version in sync with surefire; apache 17 has surefire 2.7.2 -->
-    <maven-failsafe-plugin.version>2.7.2</maven-failsafe-plugin.version>
-    <maven-scm-provider.version>1.9.1</maven-scm-provider.version>
+    <!-- Apache 18 has 2.10.3, but need 2.10.4 for [MJAVADOC-442]. -->
+    <maven-javadoc-plugin.version>2.10.4</maven-javadoc-plugin.version>
+    <maven-scm-provider.version>1.9.4</maven-scm-provider.version>
     <maven-shade-plugin.version>2.1</maven-shade-plugin.version>
-    <maven-source-plugin.version>2.4</maven-source-plugin.version>
     <mockito-all.version>1.10.19</mockito-all.version>
     <mongo-java-driver.version>2.12.3</mongo-java-driver.version>
     <mysql-driver.version>5.1.20</mysql-driver.version>
     <opencsv.version>2.3</opencsv.version>
     <oracle-jdbc6-driver.version>11.2.0.2.0</oracle-jdbc6-driver.version>
-    <pentaho-aggdesigner.version>5.1.5-jhyde</pentaho-aggdesigner.version>
+    <aggdesigner.version>6.0</aggdesigner.version>
     <postgresql.version>9.3-1102-jdbc3</postgresql.version>
-    <protobuf.version>3.0.0-beta-1</protobuf.version>
-    <quidem.version>0.7</quidem.version>
+    <quidem.version>0.8</quidem.version>
     <scala.version>2.10.3</scala.version>
     <scott-data-hsqldb.version>0.1</scott-data-hsqldb.version>
     <servlet.version>3.0.1</servlet.version>
     <slf4j.version>1.7.13</slf4j.version>
     <spark.version>1.6.1</spark.version>
-    <sqlline.version>1.1.9</sqlline.version>
+    <sqlline.version>1.2.0</sqlline.version>
     <xalan.version>2.7.1</xalan.version>
     <xerces.version>2.9.1</xerces.version>
   </properties>
@@ -127,7 +124,7 @@ limitations under the License.
     <connection>scm:git:https://git-wip-us.apache.org/repos/asf/calcite.git</connection>
     <developerConnection>scm:git:https://git-wip-us.apache.org/repos/asf/calcite.git</developerConnection>
     <url>https://github.com/apache/calcite</url>
-    <tag>calcite-1.8.0</tag>
+    <tag>HEAD</tag>
   </scm>
 
   <modules>
@@ -155,7 +152,7 @@ limitations under the License.
       <!-- Sorted by groupId, artifactId; calcite (and avatica) dependencies first. -->
       <dependency>
         <groupId>org.apache.calcite.avatica</groupId>
-        <artifactId>avatica</artifactId>
+        <artifactId>avatica-core</artifactId>
         <version>${avatica.version}</version>
       </dependency>
       <dependency>
@@ -212,6 +209,11 @@ limitations under the License.
         <version>${jackson.version}</version>
       </dependency>
       <dependency>
+        <groupId>joda-time</groupId>
+        <artifactId>joda-time</artifactId>
+        <version>${joda.version}</version>
+      </dependency>
+      <dependency>
         <groupId>com.google.code.findbugs</groupId>
         <artifactId>jsr305</artifactId>
         <version>${findbugs.version}</version>
@@ -220,11 +222,6 @@ limitations under the License.
         <groupId>com.google.guava</groupId>
         <artifactId>guava</artifactId>
         <version>${guava.version}</version>
-      </dependency>
-      <dependency>
-        <groupId>com.google.protobuf</groupId>
-        <artifactId>protobuf-java</artifactId>
-        <version>${protobuf.version}</version>
       </dependency>
       <dependency>
         <groupId>com.oracle</groupId>
@@ -258,8 +255,8 @@ limitations under the License.
       </dependency>
       <dependency>
         <groupId>net.hydromatic</groupId>
-        <artifactId>eigenbase-properties</artifactId>
-        <version>${eigenbase-properties.version}</version>
+        <artifactId>aggdesigner-algorithm</artifactId>
+        <version>${aggdesigner.version}</version>
       </dependency>
       <dependency>
         <groupId>net.hydromatic</groupId>
@@ -350,11 +347,6 @@ limitations under the License.
         <groupId>org.incava</groupId>
         <artifactId>java-diff</artifactId>
         <version>${java-diff.version}</version>
-      </dependency>
-      <dependency>
-        <groupId>org.pentaho</groupId>
-        <artifactId>pentaho-aggdesigner-algorithm</artifactId>
-        <version>${pentaho-aggdesigner.version}</version>
       </dependency>
       <dependency>
         <groupId>org.apache.spark</groupId>
@@ -532,10 +524,8 @@ limitations under the License.
         </dependencies>
       </plugin> -->
       <plugin>
-        <!-- override default version 2.8 for access to additional config settings -->
         <groupId>org.apache.maven.plugins</groupId>
         <artifactId>maven-dependency-plugin</artifactId>
-        <version>${maven-dependency-plugin.version}</version>
         <executions>
           <execution>
             <id>analyze</id>
@@ -557,32 +547,9 @@ limitations under the License.
         <artifactId>maven-javadoc-plugin</artifactId>
         <configuration>
           <links>
-            <link>http://docs.oracle.com/javase/8/docs/api/</link>
+            <link>https://docs.oracle.com/javase/8/docs/api/</link>
           </links>
-          <excludePackageNames>org.apache.calcite.sql.parser.impl,org.apache.calcite.piglet.parser</excludePackageNames>
-          <tags>
-            <tag>
-              <name>sql.92</name>
-              <placement>a</placement>
-              <head>SQL 92 spec:</head>
-            </tag>
-            <tag>
-              <name>sql.99</name>
-              <placement>a</placement>
-              <head>SQL 99 spec:</head>
-            </tag>
-            <tag>
-              <name>sql.2003</name>
-              <placement>a</placement>
-              <head>SQL 2003 spec:</head>
-            </tag>
-            <tag>
-              <name>pre</name>
-            </tag>
-            <tag>
-              <name>post</name>
-            </tag>
-          </tags>
+          <excludePackageNames>org.apache.calcite.benchmarks.generated,org.apache.calcite.sql.parser.impl,org.apache.calcite.sql.parser.parserextensiontesting,org.apache.calcite.piglet.parser,org.openjdk.jmh</excludePackageNames>
           <show>private</show>
         </configuration>
       </plugin>
@@ -633,6 +600,18 @@ limitations under the License.
               </resources>
             </configuration>
           </execution>
+          <execution>
+            <id>add-test-sources</id>
+            <phase>generate-test-sources</phase>
+            <goals>
+              <goal>add-test-source</goal>
+            </goals>
+            <configuration>
+              <sources>
+                <source>${project.build.directory}/generated-test-sources/javacc</source>
+              </sources>
+            </configuration>
+          </execution>
         </executions>
       </plugin>
     </plugins>
@@ -670,7 +649,6 @@ limitations under the License.
         <plugin>
           <groupId>org.apache.maven.plugins</groupId>
           <artifactId>maven-failsafe-plugin</artifactId>
-          <version>${maven-failsafe-plugin.version}</version>
           <executions>
             <execution>
               <id>failsafe-integration-test</id>
@@ -695,13 +673,32 @@ limitations under the License.
         </plugin>
         <plugin>
           <groupId>org.apache.maven.plugins</groupId>
+          <artifactId>maven-javadoc-plugin</artifactId>
+          <version>${maven-javadoc-plugin.version}</version>
+        </plugin>
+        <!-- Override base, which uses version 3.0.0. -->
+        <plugin>
+          <groupId>org.apache.maven.plugins</groupId>
+          <artifactId>maven-jar-plugin</artifactId>
+          <version>3.0.2</version>
+          <configuration>
+            <archive>
+              <manifest>
+                <addDefaultSpecificationEntries>true</addDefaultSpecificationEntries>
+                <addDefaultImplementationEntries>true</addDefaultImplementationEntries>
+              </manifest>
+            </archive>
+          </configuration>
+        </plugin>
+        <plugin>
+          <groupId>org.apache.maven.plugins</groupId>
           <artifactId>maven-shade-plugin</artifactId>
           <version>${maven-shade-plugin.version}</version>
         </plugin>
         <plugin>
           <groupId>org.apache.maven.plugins</groupId>
           <artifactId>maven-source-plugin</artifactId>
-          <version>${maven-source-plugin.version}</version>
+          <version>3.0.1</version>
         </plugin>
         <plugin>
           <groupId>org.apache.maven.plugins</groupId>
@@ -737,29 +734,12 @@ limitations under the License.
       <plugin>
         <groupId>org.apache.maven.plugins</groupId>
         <artifactId>maven-javadoc-plugin</artifactId>
+        <version>${maven-javadoc-plugin.version}</version>
         <configuration>
           <links>
-            <link>http://docs.oracle.com/javase/8/docs/api/</link>
+            <link>https://docs.oracle.com/javase/8/docs/api/</link>
           </links>
-          <excludePackageNames>org.apache.calcite.sql.parser.impl,org.apache.calcite.piglet.parser</excludePackageNames>
-          <tags>
-            <tag>
-              <name>sql.92</name>
-              <placement>a</placement>
-              <head>SQL 92 spec:</head>
-            </tag>
-            <tag>
-              <name>sql.99</name>
-              <placement>a</placement>
-              <head>SQL 99 spec:</head>
-            </tag>
-            <tag>
-              <name>sql.2003</name>
-              <placement>a</placement>
-              <head>SQL 2003 spec:</head>
-            </tag>
-          </tags>
-          <additionalparam>-tag sql.2003:a:xxx</additionalparam>
+          <excludePackageNames>org.apache.calcite.benchmarks.generated,org.apache.calcite.sql.parser.impl,org.apache.calcite.sql.parser.parserextensiontesting,org.apache.calcite.piglet.parser,org.openjdk.jmh</excludePackageNames>
           <notimestamp>true</notimestamp>
           <windowtitle>Apache Calcite API</windowtitle>
         </configuration>
@@ -776,17 +756,6 @@ limitations under the License.
       <snapshots>
         <enabled>false</enabled>
       </snapshots>
-    </repository>
-    <repository>
-      <releases>
-        <enabled>true</enabled>
-        <updatePolicy>always</updatePolicy>
-        <checksumPolicy>warn</checksumPolicy>
-      </releases>
-      <id>conjars</id>
-      <name>Conjars</name>
-      <url>http://conjars.org/repo</url>
-      <layout>default</layout>
     </repository>
   </repositories>
 

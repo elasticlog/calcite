@@ -41,12 +41,18 @@ public interface ConnectionConfig {
   String avaticaUser();
   /** @see BuiltInConnectionProperty#AVATICA_PASSWORD */
   String avaticaPassword();
+  /** @see BuiltInConnectionProperty#HTTP_CLIENT_FACTORY */
   AvaticaHttpClientFactory httpClientFactory();
+  /** @see BuiltInConnectionProperty#HTTP_CLIENT_IMPL */
   String httpClientClass();
   /** @see BuiltInConnectionProperty#PRINCIPAL */
   String kerberosPrincipal();
   /** @see BuiltInConnectionProperty#KEYTAB */
   File kerberosKeytab();
+  /** @see BuiltInConnectionProperty#TRUSTSTORE */
+  File truststore();
+  /** @see BuiltInConnectionProperty#TRUSTSTORE_PASSWORD */
+  String truststorePassword();
 }
 
 // End ConnectionConfig.java

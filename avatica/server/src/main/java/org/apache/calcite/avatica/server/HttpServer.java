@@ -37,6 +37,7 @@ import org.eclipse.jetty.server.ServerConnector;
 import org.eclipse.jetty.server.handler.DefaultHandler;
 import org.eclipse.jetty.server.handler.HandlerList;
 import org.eclipse.jetty.util.security.Constraint;
+import org.eclipse.jetty.util.ssl.SslContextFactory;
 import org.eclipse.jetty.util.thread.QueuedThreadPool;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -73,6 +74,7 @@ public class HttpServer {
   private final AvaticaHandler handler;
   private final AvaticaServerConfiguration config;
   private final Subject subject;
+  private final SslContextFactory sslFactory;
 
   @Deprecated
   public HttpServer(Handler handler) {
@@ -120,10 +122,24 @@ public class HttpServer {
    */
   public HttpServer(int port, AvaticaHandler handler, AvaticaServerConfiguration config,
       Subject subject) {
+    this(port, handler, config, subject, null);
+  }
+
+  /**
+   * Constructs an {@link HttpServer}.
+   * @param port The listen port
+   * @param handler The Handler to run
+   * @param config Optional configuration for the server
+   * @param subject The javax.security Subject for the server, or null
+   * @param sslFactory A configured SslContextFactory, or null
+   */
+  public HttpServer(int port, AvaticaHandler handler, AvaticaServerConfiguration config,
+      Subject subject, SslContextFactory sslFactory) {
     this.port = port;
     this.handler = handler;
     this.config = config;
     this.subject = subject;
+    this.sslFactory = sslFactory;
   }
 
   private static AvaticaHandler wrapJettyHandler(Handler handler) {
@@ -158,7 +174,7 @@ public class HttpServer {
     server = new Server(threadPool);
     server.manage(threadPool);
 
-    final ServerConnector connector = configureConnector(new ServerConnector(server), port);
+    final ServerConnector connector = configureConnector(getConnector(), port);
     ConstraintSecurityHandler securityHandler = null;
 
     if (null != this.config) {
@@ -212,6 +228,13 @@ public class HttpServer {
     }
   }
 
+  private ServerConnector getConnector() {
+    if (null == sslFactory) {
+      return new ServerConnector(server);
+    }
+    return new ServerConnector(server, sslFactory);
+  }
+
   private RpcMetadataResponse createRpcServerMetadata(ServerConnector connector) throws
       UnknownHostException {
     String host = connector.getHost();
@@ -242,8 +265,24 @@ public class HttpServer {
     PropertyBasedSpnegoLoginService spnegoLoginService =
         new PropertyBasedSpnegoLoginService(realm, principal);
 
+    // Roles are "realms" for Kerberos/SPNEGO
+    final String[] allowedRealms = getAllowedRealms(realm, config);
+
     return configureCommonAuthentication(server, connector, config, Constraint.__SPNEGO_AUTH,
-        new String[] {realm}, new SpnegoAuthenticator(), realm, spnegoLoginService);
+        allowedRealms, new SpnegoAuthenticator(), realm, spnegoLoginService);
+  }
+
+  protected String[] getAllowedRealms(String serverRealm, AvaticaServerConfiguration config) {
+    // Roles are "realms" for Kerberos/SPNEGO
+    String[] allowedRealms = new String[] {serverRealm};
+    // By default, only the server's realm is allowed, but other realms can also be allowed.
+    if (null != config.getAllowedRoles()) {
+      allowedRealms = new String[config.getAllowedRoles().length + 1];
+      allowedRealms[0] = serverRealm;
+      System.arraycopy(config.getAllowedRoles(), 0, allowedRealms, 1,
+          config.getAllowedRoles().length);
+    }
+    return allowedRealms;
   }
 
   protected ConstraintSecurityHandler configureBasicAuthentication(Server server,
@@ -315,6 +354,10 @@ public class HttpServer {
     return connector;
   }
 
+  protected AvaticaServerConfiguration getConfig() {
+    return this.config;
+  }
+
   public void stop() {
     if (server == null) {
       throw new RuntimeException("Server is already stopped");
@@ -362,6 +405,12 @@ public class HttpServer {
     private String loginServiceRealm;
     private String loginServiceProperties;
     private String[] loginServiceAllowedRoles;
+
+    private boolean usingTLS = false;
+    private File keystore;
+    private String keystorePassword;
+    private File truststore;
+    private String truststorePassword;
 
     public Builder() {}
 
@@ -416,13 +465,29 @@ public class HttpServer {
      * @return <code>this</code>
      */
     public Builder withSpnego(String principal) {
+      return withSpnego(principal, (String[]) null);
+    }
+
+    /**
+     * Configures the server to use SPNEGO authentication. This method requires that the
+     * <code>principal</code> contains the Kerberos realm. Invoking this method overrides any
+     * previous call which configures authentication. Invoking this method overrides any previous
+     * call which configures authentication. By default, only principals from the server's realm are
+     * permitted, but additional realms can be allowed using <code>additionalAllowedRealms</code>.
+     *
+     * @param principal A kerberos principal with the realm required.
+     * @param additionalAllowedRealms Any additional realms, other than the server's realm, which
+     *    should be allowed to authenticate against the server. Can be null.
+     * @return <code>this</code>
+     */
+    public Builder withSpnego(String principal, String[] additionalAllowedRealms) {
       int index = Objects.requireNonNull(principal).lastIndexOf('@');
       if (-1 == index) {
         throw new IllegalArgumentException("Could not find '@' symbol in '" + principal
             + "' to parse the Kerberos realm from the principal");
       }
       final String realm = principal.substring(index + 1);
-      return withSpnego(principal, realm);
+      return withSpnego(principal, realm, additionalAllowedRealms);
     }
 
     /**
@@ -437,9 +502,28 @@ public class HttpServer {
      * @return <code>this</code>
      */
     public Builder withSpnego(String principal, String realm) {
+      return this.withSpnego(principal, realm, null);
+    }
+
+    /**
+     * Configures the server to use SPNEGO authentication. It is required that callers are logged
+     * in via Kerberos already or have provided the necessary configuration to automatically log
+     * in via JAAS (using the <code>java.security.auth.login.config</code> system property) before
+     * starting the {@link HttpServer}. Invoking this method overrides any previous call which
+     * configures authentication. By default, only principals from the server's realm are permitted,
+     * but additional realms can be allowed using <code>additionalAllowedRealms</code>.
+     *
+     * @param principal The kerberos principal
+     * @param realm The kerberos realm
+     * @param additionalAllowedRealms Any additional realms, other than the server's realm, which
+     *    should be allowed to authenticate against the server. Can be null.
+     * @return <code>this</code>
+     */
+    public Builder withSpnego(String principal, String realm, String[] additionalAllowedRealms) {
       this.authenticationType = AuthenticationType.SPNEGO;
       this.kerberosPrincipal = Objects.requireNonNull(principal);
       this.kerberosRealm = Objects.requireNonNull(realm);
+      this.loginServiceAllowedRoles = additionalAllowedRealms;
       return this;
     }
 
@@ -506,6 +590,25 @@ public class HttpServer {
     }
 
     /**
+     * Configures the server to use TLS for wire encryption.
+     *
+     * @param keystore The server's keystore
+     * @param keystorePassword The keystore's password
+     * @param truststore The truststore containing the key used to generate the server's key
+     * @param truststorePassword The truststore's password
+     * @return <code>this</code>
+     */
+    public Builder withTLS(File keystore, String keystorePassword, File truststore,
+        String truststorePassword) {
+      this.usingTLS = true;
+      this.keystore = Objects.requireNonNull(keystore);
+      this.keystorePassword = Objects.requireNonNull(keystorePassword);
+      this.truststore = Objects.requireNonNull(truststore);
+      this.truststorePassword = Objects.requireNonNull(truststorePassword);
+      return this;
+    }
+
+    /**
      * Builds the HttpServer instance from <code>this</code>.
      * @return An HttpServer.
      */
@@ -524,6 +627,9 @@ public class HttpServer {
         subject = null;
         break;
       case SPNEGO:
+        if (usingTLS) {
+          throw new IllegalArgumentException("TLS has not been tested wtih SPNEGO");
+        }
         if (null != keytab) {
           LOG.debug("Performing Kerberos login with {} as {}", keytab, kerberosPrincipal);
           subject = loginViaKerberos(this);
@@ -538,8 +644,16 @@ public class HttpServer {
       }
 
       AvaticaHandler handler = buildHandler(this, serverConfig);
+      SslContextFactory sslFactory = null;
+      if (usingTLS) {
+        sslFactory = new SslContextFactory();
+        sslFactory.setKeyStorePath(this.keystore.getAbsolutePath());
+        sslFactory.setKeyStorePassword(keystorePassword);
+        sslFactory.setTrustStorePath(truststore.getAbsolutePath());
+        sslFactory.setTrustStorePassword(truststorePassword);
+      }
 
-      return new HttpServer(port, handler, serverConfig, subject);
+      return new HttpServer(port, handler, serverConfig, subject, sslFactory);
     }
 
     /**
@@ -568,6 +682,7 @@ public class HttpServer {
     private AvaticaServerConfiguration buildSpnegoConfiguration(Builder b) {
       final String principal = b.kerberosPrincipal;
       final String realm = b.kerberosRealm;
+      final String[] additionalAllowedRealms = b.loginServiceAllowedRoles;
       final DoAsRemoteUserCallback callback = b.remoteUserCallback;
       return new AvaticaServerConfiguration() {
 
@@ -593,7 +708,7 @@ public class HttpServer {
         }
 
         @Override public String[] getAllowedRoles() {
-          return null;
+          return additionalAllowedRealms;
         }
 
         @Override public String getHashLoginServiceRealm() {
