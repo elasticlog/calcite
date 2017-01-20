@@ -16,6 +16,19 @@
  */
 package org.apache.calcite.prepare;
 
+import static org.apache.calcite.util.Static.RESOURCE;
+
+import java.lang.reflect.Type;
+import java.math.BigDecimal;
+import java.sql.DatabaseMetaData;
+import java.sql.Types;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+
 import org.apache.calcite.DataContext;
 import org.apache.calcite.adapter.enumerable.EnumerableBindable;
 import org.apache.calcite.adapter.enumerable.EnumerableCalc;
@@ -136,19 +149,6 @@ import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Maps;
 
-import java.lang.reflect.Type;
-import java.math.BigDecimal;
-import java.sql.DatabaseMetaData;
-import java.sql.Types;
-import java.util.ArrayList;
-import java.util.Collections;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.Set;
-
-import static org.apache.calcite.util.Static.RESOURCE;
-
 /**
  * Shit just got real.
  *
@@ -159,7 +159,8 @@ import static org.apache.calcite.util.Static.RESOURCE;
 public class CalcitePrepareImpl implements CalcitePrepare {
 
   public static final boolean DEBUG = Util.getBooleanProperty("calcite.debug");
-
+  
+  
   public static final boolean COMMUTE =
       Util.getBooleanProperty("calcite.enable.join.commute");
 
@@ -684,19 +685,28 @@ public class CalcitePrepareImpl implements CalcitePrepare {
     final Meta.StatementType statementType;
     if (query.sql != null) {
       final CalciteConnectionConfig config = context.config();
-      SqlParser parser = createParser(query.sql,
-          createParserConfig()
-              .setQuotedCasing(config.quotedCasing())
-              .setUnquotedCasing(config.unquotedCasing())
-              .setQuoting(config.quoting()));
-      SqlNode sqlNode;
-      try {
-        sqlNode = parser.parseStmt();
-        statementType = getStatementType(sqlNode.getKind());
-      } catch (SqlParseException e) {
-        throw new RuntimeException(
-            "parse failed: " + e.getMessage(), e);
+      ParseCacheEntry parseCacheEntry = Prepare.PARSE_CACHE.get(query.sql);
+      if (parseCacheEntry == null) {
+    	  parseCacheEntry = new ParseCacheEntry(); 
       }
+      SqlNode sqlNode = parseCacheEntry.sqlNode;
+      if (sqlNode == null) {
+    	  SqlParser parser = createParser(query.sql,
+    	          createParserConfig()
+    	              .setQuotedCasing(config.quotedCasing())
+    	              .setUnquotedCasing(config.unquotedCasing())
+    	              .setQuoting(config.quoting()));
+    	      try {
+    	        sqlNode = parser.parseStmt();
+    	        parseCacheEntry = new ParseCacheEntry();
+    	        parseCacheEntry.sqlNode = sqlNode;
+    	        Prepare.PARSE_CACHE.putIfAbsent(query.sql, parseCacheEntry);
+    	      } catch (SqlParseException e) {
+    	        throw new RuntimeException(
+    	            "parse failed: " + e.getMessage(), e);
+    	      }
+      }
+      statementType = getStatementType(sqlNode.getKind());
 
       Hook.PARSE_TREE.run(new Object[] {query.sql, sqlNode});
 
@@ -730,7 +740,13 @@ public class CalcitePrepareImpl implements CalcitePrepare {
         x = RelOptUtil.createDmlRowType(sqlNode.getKind(), typeFactory);
         break;
       default:
-        x = validator.getValidatedNodeType(sqlNode);
+    	if (parseCacheEntry.x == null) {
+    		x = validator.getValidatedNodeType(sqlNode);
+    		parseCacheEntry.x = x;
+    	}else {
+    		x = parseCacheEntry.x;
+    	}
+        
       }
     } else if (query.queryable != null) {
       x = context.getTypeFactory().createType(elementType);
@@ -1037,6 +1053,7 @@ public class CalcitePrepareImpl implements CalcitePrepare {
 
     private PreparedResult prepare_(Supplier<RelNode> fn,
         RelDataType resultType) {
+      
       queryString = null;
       Class runtimeContextClass = Object.class;
       init(runtimeContextClass);
@@ -1069,14 +1086,13 @@ public class CalcitePrepareImpl implements CalcitePrepare {
       // Trim unused fields.
       root = trimUnusedFields(root);
 
+      
       final List<Materialization> materializations = ImmutableList.of();
       final List<CalciteSchema.LatticeEntry> lattices = ImmutableList.of();
       root = optimize(root, materializations, lattices);
-
       if (timingTracer != null) {
-        timingTracer.traceTime("end optimization");
+         timingTracer.traceTime("end optimization");
       }
-
       return implement(root);
     }
 

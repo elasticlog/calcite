@@ -16,6 +16,12 @@
  */
 package org.apache.calcite.prepare;
 
+import java.lang.reflect.Type;
+import java.util.Collections;
+import java.util.List;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
+
 import org.apache.calcite.DataContext;
 import org.apache.calcite.adapter.java.JavaTypeFactory;
 import org.apache.calcite.jdbc.CalcitePrepare;
@@ -55,15 +61,10 @@ import org.apache.calcite.util.Pair;
 import org.apache.calcite.util.TryThreadLocal;
 import org.apache.calcite.util.trace.CalciteTimingTracer;
 import org.apache.calcite.util.trace.CalciteTrace;
+import org.slf4j.Logger;
 
 import com.google.common.base.Preconditions;
 import com.google.common.collect.ImmutableList;
-
-import org.slf4j.Logger;
-
-import java.lang.reflect.Type;
-import java.util.Collections;
-import java.util.List;
 
 /**
  * Abstract base for classes that implement
@@ -71,7 +72,7 @@ import java.util.List;
  */
 public abstract class Prepare {
   protected static final Logger LOGGER = CalciteTrace.getStatementTracer();
-
+ 
   protected final CalcitePrepare.Context context;
   protected final CatalogReader catalogReader;
   protected String queryString = null;
@@ -86,6 +87,17 @@ public abstract class Prepare {
   // temporary. for testing.
   public static final TryThreadLocal<Boolean> THREAD_TRIM =
       TryThreadLocal.of(false);
+  
+  public static final ConcurrentMap<SqlNode, OptCacheEntry> OPT_CACHE = new ConcurrentHashMap<SqlNode, OptCacheEntry>();
+  public class OptCacheEntry {
+	  public RelRoot root;
+	  public List<List<String>> fieldOrigins;
+	  public RelDataType parameterRowType;
+  }
+  
+   
+  public static final ConcurrentMap<String, ParseCacheEntry> PARSE_CACHE = new ConcurrentHashMap<String, ParseCacheEntry>();
+  
 
   /** Temporary, until
    * <a href="https://issues.apache.org/jira/browse/CALCITE-1045">[CALCITE-1045]
@@ -149,7 +161,7 @@ public abstract class Prepare {
       planner.addLattice(
           new RelOptLattice(lattice.getLattice(), starRelOptTable));
     }
-
+    
     final RelNode rootRel4 = program.run(planner, root.rel, desiredTraits);
     LOGGER.debug("Plan after physical tweaks: {}",
         RelOptUtil.toString(rootRel4, SqlExplainLevel.ALL_ATTRIBUTES));
@@ -205,9 +217,14 @@ public abstract class Prepare {
       SqlValidator validator,
       boolean needsValidation) {
     queryString = sqlQuery.toString();
-
     init(runtimeContextClass);
-
+    OptCacheEntry cached = OPT_CACHE.get(sqlNodeOriginal);
+    if (cached != null) {
+        //final RelDataType resultType = validator.getValidatedNodeType(sqlQuery);
+        fieldOrigins = cached.fieldOrigins;
+    	parameterRowType = cached.parameterRowType;
+    	return implement(cached.root);
+    }
     SqlToRelConverter sqlToRelConverter =
         getSqlToRelConverter(validator, catalogReader);
     sqlToRelConverter.setExpand(THREAD_EXPAND.get());
@@ -230,6 +247,7 @@ public abstract class Prepare {
 
     final RelDataType resultType = validator.getValidatedNodeType(sqlQuery);
     fieldOrigins = validator.getFieldOrigins(sqlQuery);
+    
     assert fieldOrigins.size() == resultType.getFieldCount();
 
     parameterRowType = validator.getParameterRowType(sqlQuery);
@@ -279,8 +297,8 @@ public abstract class Prepare {
       }
     }
 
+    
     root = optimize(root, getMaterializations(), getLattices());
-
     if (timingTracer != null) {
       timingTracer.traceTime("end optimization");
     }
@@ -291,6 +309,11 @@ public abstract class Prepare {
     if (!root.kind.belongsTo(SqlKind.DML)) {
       root = root.withKind(sqlNodeOriginal.getKind());
     }
+    OptCacheEntry entry = new OptCacheEntry();
+    entry.root = root;
+    entry.fieldOrigins = fieldOrigins;
+    entry.parameterRowType = parameterRowType;
+    OPT_CACHE.putIfAbsent(sqlNodeOriginal, entry);
     return implement(root);
   }
 
