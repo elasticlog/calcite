@@ -66,6 +66,8 @@ import org.slf4j.Logger;
 import java.lang.reflect.Type;
 import java.util.Collections;
 import java.util.List;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
 
 /**
  * Abstract base for classes that implement
@@ -77,6 +79,7 @@ public abstract class Prepare {
   protected final CalcitePrepare.Context context;
   protected final CatalogReader catalogReader;
   protected String queryString = null;
+  public final static ConcurrentMap<String, PreparedResult> CACHED = new ConcurrentHashMap<String, Prepare.PreparedResult>();
   /**
    * Convention via which results should be returned by execution.
    */
@@ -212,7 +215,12 @@ public abstract class Prepare {
       SqlValidator validator,
       boolean needsValidation) {
     queryString = sqlQuery.toString();
-
+    PreparedResult cachedpr = CACHED.get(queryString);
+    
+    if (cachedpr != null) {
+    	return cachedpr;
+    }
+    
     init(runtimeContextClass);
 
     final SqlToRelConverter.ConfigBuilder builder =
@@ -300,7 +308,9 @@ public abstract class Prepare {
     if (!root.kind.belongsTo(SqlKind.DML)) {
       root = root.withKind(sqlNodeOriginal.getKind());
     }
-    return implement(root);
+    PreparedResult pr =  implement(root);
+    CACHED.putIfAbsent(queryString, pr);
+    return pr;
   }
 
   protected LogicalTableModify.Operation mapTableModOp(

@@ -16,6 +16,21 @@
  */
 package org.apache.calcite.prepare;
 
+import static org.apache.calcite.util.Static.RESOURCE;
+
+import java.lang.reflect.Type;
+import java.math.BigDecimal;
+import java.sql.DatabaseMetaData;
+import java.sql.Types;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
+
 import org.apache.calcite.DataContext;
 import org.apache.calcite.adapter.enumerable.EnumerableBindable;
 import org.apache.calcite.adapter.enumerable.EnumerableCalc;
@@ -134,25 +149,15 @@ import org.apache.calcite.tools.Frameworks;
 import org.apache.calcite.util.ImmutableIntList;
 import org.apache.calcite.util.Pair;
 import org.apache.calcite.util.Util;
+import org.apache.calcite.util.trace.CalciteTimingTracer;
+import org.apache.calcite.util.trace.CalciteTrace;
+import org.slf4j.Logger;
 
 import com.google.common.base.Supplier;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Maps;
-
-import java.lang.reflect.Type;
-import java.math.BigDecimal;
-import java.sql.DatabaseMetaData;
-import java.sql.Types;
-import java.util.ArrayList;
-import java.util.Collections;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.Set;
-
-import static org.apache.calcite.util.Static.RESOURCE;
 
 /**
  * Shit just got real.
@@ -163,8 +168,9 @@ import static org.apache.calcite.util.Static.RESOURCE;
  */
 public class CalcitePrepareImpl implements CalcitePrepare {
 
+  public static final Logger logger = CalciteTrace.getSqlTimingTracer();
   public static final boolean DEBUG = Util.getBooleanProperty("calcite.debug");
-
+  public static final ConcurrentMap<String, SqlCacheEntry> SQL_CACHE = new ConcurrentHashMap<String, SqlCacheEntry>();
   public static final boolean COMMUTE =
       Util.getBooleanProperty("calcite.enable.join.commute");
 
@@ -592,6 +598,7 @@ public class CalcitePrepareImpl implements CalcitePrepare {
       Query<T> query,
       Type elementType,
       long maxRowCount) {
+	
     if (SIMPLE_SQLS.contains(query.sql)) {
       return simplePrepare(context, query.sql);
     }
@@ -714,26 +721,39 @@ public class CalcitePrepareImpl implements CalcitePrepare {
     final Prepare.PreparedResult preparedResult;
     final Meta.StatementType statementType;
     if (query.sql != null) {
+      SqlCacheEntry entry = SQL_CACHE.get(query.sql);
+      if (entry == null) {
+    	  entry = new SqlCacheEntry();
+    	  SQL_CACHE.putIfAbsent(query.sql, entry);
+      }
+      SqlNode sqlNode = entry.getSqlNode();
       final CalciteConnectionConfig config = context.config();
-      final SqlParser.ConfigBuilder parserConfig = createParserConfig()
-          .setQuotedCasing(config.quotedCasing())
-          .setUnquotedCasing(config.unquotedCasing())
-          .setQuoting(config.quoting())
-          .setConformance(config.conformance());
-      final SqlParserImplFactory parserFactory =
-          config.parserFactory(SqlParserImplFactory.class, null);
-      if (parserFactory != null) {
-        parserConfig.setParserFactory(parserFactory);
+      if (sqlNode == null) {
+          final SqlParser.ConfigBuilder parserConfig = createParserConfig()
+              .setQuotedCasing(config.quotedCasing())
+              .setUnquotedCasing(config.unquotedCasing())
+              .setQuoting(config.quoting())
+              .setConformance(config.conformance());
+          final SqlParserImplFactory parserFactory =
+              config.parserFactory(SqlParserImplFactory.class, null);
+          if (parserFactory != null) {
+            parserConfig.setParserFactory(parserFactory);
+          }
+          SqlParser parser = createParser(query.sql,  parserConfig);
+          
+          try {
+            sqlNode = parser.parseStmt();
+            statementType = getStatementType(sqlNode.getKind());
+            entry.setSqlNode(sqlNode);
+            
+          } catch (SqlParseException e) {
+            throw new RuntimeException(
+                "parse failed: " + e.getMessage(), e);
+          }
+      }else {
+    	  statementType = getStatementType(sqlNode.getKind());
       }
-      SqlParser parser = createParser(query.sql,  parserConfig);
-      SqlNode sqlNode;
-      try {
-        sqlNode = parser.parseStmt();
-        statementType = getStatementType(sqlNode.getKind());
-      } catch (SqlParseException e) {
-        throw new RuntimeException(
-            "parse failed: " + e.getMessage(), e);
-      }
+      
 
       Hook.PARSE_TREE.run(new Object[] {query.sql, sqlNode});
 
@@ -769,7 +789,12 @@ public class CalcitePrepareImpl implements CalcitePrepare {
         x = RelOptUtil.createDmlRowType(sqlNode.getKind(), typeFactory);
         break;
       default:
-        x = validator.getValidatedNodeType(sqlNode);
+    	if (entry.getX() == null) {
+    		x = validator.getValidatedNodeType(sqlNode);
+    		entry.setX(x);
+    	}else {
+    		x = entry.getX();
+    	}
       }
     } else if (query.queryable != null) {
       x = context.getTypeFactory().createType(elementType);
@@ -1054,6 +1079,7 @@ public class CalcitePrepareImpl implements CalcitePrepare {
         Convention resultConvention,
         SqlRexConvertletTable convertletTable) {
       super(context, catalogReader, resultConvention);
+      this.timingTracer = new CalciteTimingTracer(Prepare.LOGGER, "start query");
       this.prepare = prepare;
       this.schema = schema;
       this.prefer = prefer;
@@ -1107,7 +1133,7 @@ public class CalcitePrepareImpl implements CalcitePrepare {
       RelRoot root = new RelRoot(rel, resultType, SqlKind.SELECT, fields,
           collation);
 
-      if (timingTracer != null) {
+      if (logger.isDebugEnabled()) {
         timingTracer.traceTime("end sql2rel");
       }
 
@@ -1127,7 +1153,7 @@ public class CalcitePrepareImpl implements CalcitePrepare {
       final List<CalciteSchema.LatticeEntry> lattices = ImmutableList.of();
       root = optimize(root, materializations, lattices);
 
-      if (timingTracer != null) {
+      if (logger.isDebugEnabled()) {
         timingTracer.traceTime("end optimization");
       }
 

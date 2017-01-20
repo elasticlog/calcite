@@ -495,7 +495,7 @@ limitations under the License.
           <target>1.7</target>
         </configuration>
       </plugin>
-      <plugin>
+      <!-- <plugin>
         <groupId>org.apache.maven.plugins</groupId>
         <artifactId>maven-checkstyle-plugin</artifactId>
         <executions>
@@ -522,7 +522,7 @@ limitations under the License.
             <version>${hydromatic-toolbox.version}</version>
           </dependency>
         </dependencies>
-      </plugin>
+      </plugin>-->
       <plugin>
         <groupId>org.apache.maven.plugins</groupId>
         <artifactId>maven-dependency-plugin</artifactId>
